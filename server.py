@@ -21,6 +21,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
+from urllib.request import urlopen
 
 APP_DIR = Path(__file__).resolve().parent
 SKILL_CALLER = APP_DIR / "tools" / "call_business_model.py"
@@ -110,7 +111,7 @@ def now() -> float:
 PERSISTED_TASK_FIELDS = (
     "id", "kind", "profile", "prompt", "status", "created_at", "started_at",
     "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
-    "local_video_url", "error", "queue_position",
+    "local_image_url", "local_video_url", "error", "queue_position",
 )
 
 
@@ -150,6 +151,7 @@ def restore_history_task(snapshot: dict[str, Any]) -> dict[str, Any] | None:
         "duration": str(snapshot.get("duration") or "15"),
         "resolution": str(snapshot.get("resolution") or "720p"),
         "image_url": str(snapshot.get("image_url") or ""),
+        "local_image_url": str(snapshot.get("local_image_url") or ""),
         "video_url": "",
         "local_video_url": str(snapshot.get("local_video_url") or ""),
         "error": str(snapshot.get("error") or ""),
@@ -229,7 +231,7 @@ def public_task(task: dict[str, Any]) -> dict[str, Any]:
         for key in (
             "id", "kind", "profile", "prompt", "status", "created_at", "started_at",
             "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
-            "video_url", "local_video_url", "error", "queue_position",
+            "local_image_url", "video_url", "local_video_url", "error", "queue_position",
         )
     }
     public["reference_files"] = [
@@ -301,6 +303,7 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
                 "duration": duration,
                 "resolution": resolution,
                 "image_url": "",
+                "local_image_url": "",
                 "video_url": "",
                 "local_video_url": "",
                 "error": "",
@@ -322,6 +325,22 @@ def parse_model_result(raw: str) -> dict[str, Any]:
     if payload.get("ok") is False:
         raise RuntimeError(payload.get("error") or "模型调用失败")
     return payload
+
+
+def download_image_result(image_url: str, task_id: str) -> str:
+    """Download one generated image and return its local media URL."""
+    with urlopen(image_url, timeout=120) as response:
+        content_type = response.headers.get_content_type()
+        suffix = Path(urlparse(image_url).path).suffix.lower()
+        if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+            suffix = mimetypes.guess_extension(content_type) or ".jpg"
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        target = RESULTS_DIR / f"{task_id}{suffix}"
+        temporary = target.with_suffix(target.suffix + ".part")
+        with temporary.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        temporary.replace(target)
+    return f"/media/results/{target.name}"
 
 
 def run_task(task_id: str) -> None:
@@ -358,9 +377,16 @@ def run_task(task_id: str) -> None:
         result = parse_model_result(completed.stdout)
         if completed.returncode != 0:
             raise RuntimeError(result.get("error") or "模型调用失败")
+        image_url = str(result.get("image_url") or "")
+        local_image_url = ""
+        if task["kind"] == "image":
+            if not image_url:
+                raise RuntimeError("模型未返回图片地址")
+            local_image_url = download_image_result(image_url, task_id)
         with LOCK:
             task["status"] = "completed"
-            task["image_url"] = str(result.get("image_url") or "")
+            task["image_url"] = image_url
+            task["local_image_url"] = local_image_url
             task["video_url"] = str(result.get("video_url") or "")
             output_file = result.get("output_file")
             if output_file and Path(output_file).exists():

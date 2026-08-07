@@ -99,11 +99,12 @@ function taskCard(task) {
   const fragment = document.querySelector('#task-template').content.cloneNode(true);
   const card = fragment.querySelector('.task-card'); card.classList.add(task.status);
   const frame = fragment.querySelector('.media-frame');
-  if (task.status === 'completed' && task.kind === 'image' && task.image_url) {
+  if (task.status === 'completed' && task.kind === 'image' && (task.local_image_url || task.image_url)) {
+    const imageUrl = task.local_image_url || task.image_url;
     const openPreview = document.createElement('button');
     openPreview.type = 'button'; openPreview.className = 'image-preview-trigger'; openPreview.title = '点击放大预览';
-    const image = document.createElement('img'); image.src = task.image_url; image.alt = task.prompt; image.loading = 'lazy';
-    openPreview.append(image); openPreview.addEventListener('click', () => showImagePreview(task.image_url, task.prompt));
+    const image = document.createElement('img'); image.src = imageUrl; image.alt = task.prompt; image.loading = 'lazy';
+    openPreview.append(image); openPreview.addEventListener('click', () => showImagePreview(imageUrl, task.prompt));
     frame.replaceChildren(openPreview);
   } else if (task.status === 'completed' && task.kind === 'video' && (task.local_video_url || task.video_url)) {
     const video = document.createElement('video'); video.src = task.local_video_url || task.video_url; video.controls = true; video.preload = 'metadata'; frame.replaceChildren(video);
@@ -119,7 +120,7 @@ function taskCard(task) {
     promptDetails.querySelector('.task-prompt-full').textContent = task.prompt;
   }
   const actions = fragment.querySelector('.card-actions');
-  if (task.status === 'completed' && task.kind === 'image' && task.image_url) actions.append(link('打开原图 ↗', task.image_url));
+  if (task.status === 'completed' && task.kind === 'image' && (task.local_image_url || task.image_url)) actions.append(link('下载图片 ↓', task.local_image_url || task.image_url));
   if (task.status === 'completed' && task.kind === 'video' && (task.local_video_url || task.video_url)) actions.append(link('下载视频 ↓', task.local_video_url || task.video_url));
   const retry = document.createElement('button');
   retry.type = 'button'; retry.textContent = '带回输入重试 ↶'; retry.title = '带回模型、提示词和参考素材，不会直接提交生成';
@@ -130,7 +131,7 @@ function taskCard(task) {
 }
 function link(label, href) { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = label; return a; }
 function taskSignature(task) {
-  return [task.status, task.prompt, task.image_url, task.video_url, task.local_video_url, task.error].join('|');
+  return [task.status, task.prompt, task.image_url, task.local_image_url, task.video_url, task.local_video_url, task.error].join('|');
 }
 async function loadTasks() {
   try {
