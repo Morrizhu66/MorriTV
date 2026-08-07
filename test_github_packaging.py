@@ -28,6 +28,8 @@ class GithubPackagingTests(unittest.TestCase):
         self.assertIn("ARK_API_KEY=", example)
         self.assertIn("SEEDANCE_ARK_API_KEY=", example)
         self.assertIn("HFSY_API_KEY=", example)
+        for name in ("TOS_ACCESS_KEY=", "TOS_SECRET_KEY=", "TOS_ENDPOINT=", "TOS_REGION=", "TOS_BUCKET="):
+            self.assertIn(name, example)
         self.assertNotRegex(example, r"ark-[A-Za-z0-9_-]{10,}")
         self.assertNotRegex(example, r"sk-[A-Za-z0-9_-]{10,}")
 
@@ -43,6 +45,15 @@ class GithubPackagingTests(unittest.TestCase):
 
         self.assertTrue(server.SKILL_CALLER.is_relative_to(ROOT))
         self.assertTrue(server.SKILL_CALLER.is_file())
+
+    def test_launcher_bootstraps_the_tos_sdk_in_an_ignored_virtualenv(self):
+        launcher = (ROOT / "Start Model Studio.command").read_text(encoding="utf-8")
+        requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("pip install -r requirements.txt", launcher)
+        self.assertIn(".venv/bin/python3 server.py", launcher)
+        self.assertIn("tos", requirements)
+        self.assertIn(".venv/", gitignore)
 
 
 if __name__ == "__main__":

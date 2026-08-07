@@ -21,7 +21,7 @@
 
 HFSY 模型使用 `HFSY_API_KEY`，可在 [HFSY API](https://www.hfsyapi.cn) 申请，接口说明见[HFSY 文档](https://www.hfsyapi.cn/docs)。HFSY 与 Ark 是完全独立的调用链路，未配置某一侧的 Key 不影响另一侧。
 
-HFSY 参考素材需在页面中按行填写公网可访问 URL。HFSY 官网创作中心的文件上传端点不接受 API Key，因此 HFSY 模型不直接上传本地文件；Ark 模型仍支持本地拖入和粘贴。
+HFSY 只接收公网 URL，所以本地参考素材会先自动上传到你的私有火山引擎 TOS Bucket，再生成短时 GET 签名 URL 交给 HFSY。任务结束后服务会主动删除临时对象；也可在页面直接填公网 URL，此时不需要 TOS。
 
 ## 2. 配置
 
@@ -39,7 +39,15 @@ cp .env.example .env
 ARK_API_KEY=你的图片生成APIKey
 SEEDANCE_ARK_API_KEY=你的视频生成APIKey
 HFSY_API_KEY=你的HFSY API Key
+TOS_ACCESS_KEY=你的TOS Access Key
+TOS_SECRET_KEY=你的TOS Secret Key
+TOS_ENDPOINT=tos-cn-beijing.volces.com
+TOS_REGION=cn-beijing
+TOS_BUCKET=你的私有Bucket名
+TOS_SIGNED_URL_TTL=1800
 ```
+
+TOS Bucket 建议保持私有，并为 `hfsy-temp/` 前缀设置 1 天后自动过期的生命周期规则，作为异常中断时的兜底清理。签名 URL 默认有效 30 分钟。
 
 也可以不创建 `.env`，直接在启动前设置同名环境变量。进程环境变量的优先级高于 `.env`。
 

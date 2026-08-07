@@ -75,9 +75,10 @@ class HfsyServerIntegrationTests(unittest.TestCase):
             health = server.health_flags()
 
         self.assertTrue(health["hfsy_ready"])
+        self.assertFalse(health["tos_ready"])
         self.assertNotIn("do-not-leak", repr(health))
 
-    def test_hfsy_accepts_public_reference_urls_and_rejects_local_files(self):
+    def test_hfsy_accepts_public_urls_and_local_files_when_tos_is_ready(self):
         with patch.object(server.EXECUTOR, "submit"):
             task = server.create_tasks(Fields({
                 "kind": "image", "profile": "hfsy-gpt-image-2", "prompts": "edit",
@@ -87,11 +88,34 @@ class HfsyServerIntegrationTests(unittest.TestCase):
         self.assertEqual(task["reference_files"][0]["url"], "https://cdn.example/look.png")
         self.assertEqual(task["reference_files"][0]["mime"], "image/png")
 
-        with self.assertRaisesRegex(ValueError, "HFSY 参考素材请填写公网 URL"):
+        with patch.object(server.tos_uploader, "config_status", return_value={"ready": True, "missing": []}):
             server.validate_task_input(
                 "image", "hfsy-gpt-image-2", "edit", "1:1", "10", "1K",
                 [{"path": "/tmp/local.png", "mime": "image/png", "name": "local.png"}],
             )
+
+        with patch.object(server.tos_uploader, "config_status", return_value={"ready": False, "missing": ["TOS_BUCKET"]}):
+            with self.assertRaisesRegex(RuntimeError, "TOS_BUCKET"):
+                server.validate_task_input(
+                    "image", "hfsy-gpt-image-2", "edit", "1:1", "10", "1K",
+                    [{"path": "/tmp/local.png", "mime": "image/png", "name": "local.png"}],
+                )
+
+    def test_hfsy_generation_hosts_local_references_and_always_cleans_them_up(self):
+        task = {
+            "profile": "hfsy-gpt-image-2", "prompt": "edit", "ratio": "1:1", "resolution": "1K",
+            "duration": "10", "reference_files": [{"path": "/tmp/look.png", "mime": "image/png", "name": "look.png"}],
+        }
+        hosted = {"url": "https://tos.example/look.png?signature=x", "mime": "image/png", "name": "look.png", "tos_key": "hfsy-temp/look.png"}
+        with patch.object(server.tos_uploader, "upload_reference", return_value=hosted) as upload:
+            with patch.object(server.tos_uploader, "delete_hosted_references") as cleanup:
+                with patch.object(server.hfsy_client, "generate", return_value={"result_url": "https://cdn.example/result.png"}) as generate:
+                    result = server.run_hfsy_generation(task, "hfsy-key")
+
+        upload.assert_called_once()
+        self.assertEqual(generate.call_args.kwargs["references"], [hosted])
+        cleanup.assert_called_once_with([hosted], server.private_env_value)
+        self.assertEqual(result["result_url"], "https://cdn.example/result.png")
 
 
 if __name__ == "__main__":

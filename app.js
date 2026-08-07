@@ -46,14 +46,13 @@ function applySelectedModel() {
   setOptions('#duration', model.duration || [], value => `${value} 秒`);
   fileInput.accept = model.accept;
   const isHfsy = model.provider === 'hfsy';
-  document.querySelector('#dropzone').classList.toggle('hidden', isHfsy);
-  document.querySelector('#reference-preview').classList.toggle('hidden', isHfsy);
+  document.querySelector('#dropzone').classList.remove('hidden');
+  document.querySelector('#reference-preview').classList.remove('hidden');
   document.querySelector('#reference-urls-field').classList.toggle('hidden', !isHfsy);
   document.querySelector('#reference-hint').textContent = model.kind === 'video'
     ? (model.provider === 'hfsy' ? '可选，图片最多 5 张＋音频最多 1 条' : '可选，支持图 / 视频 / 音频')
     : `可选，参考图最多 ${model.maxImages} 张`;
   state.files = state.files.filter(file => model.accept.split(',').some(pattern => file.type.startsWith(pattern.replace('/*', '/'))));
-  if (isHfsy) state.files = [];
   trimFilesToModel(model);
   renderReferences();
   updateHealth();
@@ -237,6 +236,7 @@ async function updateHealth() {
     text.textContent = ready
       ? `${model.provider === 'hfsy' ? 'HFSY' : 'ARK'} 凭证已就绪 · ${data.workers} 个并发制作位`
       : model.provider === 'hfsy' ? '未找到 HFSY_API_KEY 配置' : (state.kind === 'video' ? '未找到 SEEDANCE_ARK_API_KEY 配置' : '未找到 ARK_API_KEY 配置');
+    if (model.provider === 'hfsy' && !data.tos_ready) document.querySelector('#reference-hint').textContent = '未配置 TOS，可改填公网 URL';
   } catch { chip.className = 'system-status error'; text.textContent = '本地服务不可用'; }
 }
 form.addEventListener('submit', async event => {
@@ -244,7 +244,6 @@ form.addEventListener('submit', async event => {
   if (window.location.protocol === 'file:') { error.textContent = '当前是文件预览页，无法调用模型。请双击 Start Model Studio.command。'; return; }
   if (!prompt) { error.textContent = '先写下一条你想制作的提示词。'; return; }
   const model = selectedModel();
-  if (model.provider === 'hfsy' && state.files.length) { error.textContent = 'HFSY 参考素材请填写公网 URL，不支持直接上传本地文件。'; return; }
   if (model.promptLimit && prompt.length > model.promptLimit) { error.textContent = `当前模型提示词不能超过 ${model.promptLimit} 字。`; return; }
   error.textContent = '';
   const submit = document.querySelector('#submit-button'); submit.disabled = true;

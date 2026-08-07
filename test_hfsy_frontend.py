@@ -46,7 +46,8 @@ class HfsyFrontendContractTests(unittest.TestCase):
         self.assertIn('id="resolution"', self.html)
         self.assertIn('id="reference-urls-field"', self.html)
         self.assertIn('id="reference-urls"', self.html)
-        self.assertIn("HFSY 参考素材请填写公网 URL", self.js)
+        self.assertIn("data.tos_ready", self.js)
+        self.assertIn("未配置 TOS，可改填公网 URL", self.js)
 
 
 if __name__ == "__main__":

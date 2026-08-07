@@ -24,6 +24,7 @@ from urllib.parse import quote, unquote, urlparse
 from urllib.request import urlopen
 
 import hfsy_client
+import tos_uploader
 
 APP_DIR = Path(__file__).resolve().parent
 SKILL_CALLER = APP_DIR / "tools" / "call_business_model.py"
@@ -85,11 +86,13 @@ def private_env_value(name: str) -> str:
 
 def health_flags() -> dict[str, Any]:
     keys = set(configured_env_keys()) | set(os.environ)
+    tos_status = tos_uploader.config_status(private_env_value)
     return {
         "ok": True,
         "image_ready": "ARK_API_KEY" in keys,
         "video_ready": "SEEDANCE_ARK_API_KEY" in keys,
         "hfsy_ready": "HFSY_API_KEY" in keys,
+        "tos_ready": tos_status["ready"],
         "workers": MAX_WORKERS,
     }
 
@@ -310,9 +313,15 @@ def validate_task_input(
         spec = hfsy_client.MODEL_SPECS[profile]
         if spec["kind"] != kind:
             raise ValueError("图片模型与视频任务类型不匹配" if spec["kind"] == "image" else "视频模型与图片任务类型不匹配")
-        if any(ref.get("path") and not ref.get("url") for ref in references):
-            raise ValueError("HFSY 参考素材请填写公网 URL，不支持直接上传本地文件")
-        reference_contract = [(str(ref.get("url") or ""), ref.get("mime", "")) for ref in references]
+        local_references = [ref for ref in references if ref.get("path") and not ref.get("url")]
+        if local_references:
+            tos_status = tos_uploader.config_status(private_env_value)
+            if not tos_status["ready"]:
+                raise RuntimeError(f"HFSY 本地素材需要配置 TOS：{', '.join(tos_status['missing'])}")
+        reference_contract = [
+            (str(ref.get("url") or f"https://tos-upload.invalid/{index}"), ref.get("mime", ""))
+            for index, ref in enumerate(references)
+        ]
         hfsy_client.build_generation_request(profile, prompt, ratio, resolution, reference_contract, duration)
         return "hfsy"
     if kind == "video" and profile != "seedance-reference-video-ark-direct":
@@ -398,11 +407,27 @@ def download_image_result(image_url: str, task_id: str) -> str:
 
 
 def run_hfsy_generation(task: dict[str, Any], api_key: str) -> dict[str, str]:
-    return hfsy_client.generate(
-        profile=task["profile"], prompt=task["prompt"], ratio=task["ratio"],
-        resolution=task["resolution"], references=task["reference_files"],
-        duration=task["duration"], api_key=api_key,
-    )
+    prepared: list[dict[str, str]] = []
+    hosted: list[dict[str, str]] = []
+    try:
+        for reference in task["reference_files"]:
+            if reference.get("url"):
+                prepared.append(reference)
+            else:
+                uploaded = tos_uploader.upload_reference(reference, private_env_value)
+                prepared.append(uploaded)
+                hosted.append(uploaded)
+        return hfsy_client.generate(
+            profile=task["profile"], prompt=task["prompt"], ratio=task["ratio"],
+            resolution=task["resolution"], references=prepared,
+            duration=task["duration"], api_key=api_key,
+        )
+    finally:
+        try:
+            tos_uploader.delete_hosted_references(hosted, private_env_value)
+        except Exception as exc:
+            # Cleanup must not hide a successful generation or its real failure.
+            print(f"[{time.strftime('%H:%M:%S')}] TOS temporary-object cleanup failed: {exc}")
 
 
 def run_task(task_id: str) -> None:
