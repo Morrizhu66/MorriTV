@@ -36,8 +36,9 @@ class GithubPackagingTests(unittest.TestCase):
     def test_readme_documents_hfsy_provider_and_confirmed_models(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("HFSY_API_KEY", readme)
-        for model in ("gpt-image-2", "gpt-image-2pro", "nano-banana-2", "nano-banana-pro", "minimax-h3"):
+        for model in ("gpt-image-2", "gpt-image-2pro", "nano-banana-2", "nano-banana-pro"):
             self.assertIn(model, readme)
+        self.assertNotIn("minimax-h3", readme)
         self.assertNotIn("sd-2.5", readme)
 
     def test_server_uses_the_bundled_model_caller(self):

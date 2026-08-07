@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add five selectable HFSY image/video models without changing the existing Ark provider behavior or committing credentials.
+**Goal:** Add four selectable HFSY image models without changing the existing Ark provider behavior or committing credentials. Minimax H3 is explicitly excluded.
 
 **Architecture:** A focused standard-library `hfsy_client.py` owns provider-specific schemas, public reference URLs, polling, and response parsing. The existing server keeps queue/history ownership and dispatches by profile; the browser renders model-specific controls from a small catalog.
 
@@ -16,7 +16,7 @@
 - Create: `hfsy_client.py`
 - Create: `test_hfsy_client.py`
 
-- [ ] Write failing tests for the five-model catalog, GPT request bodies, Nano request bodies, Minimax request bodies, response URL parsing, and status mapping.
+- [ ] Write failing tests for the four-model catalog, GPT request bodies, Nano request bodies, response URL parsing, and status mapping.
 - [ ] Run `python3 -m unittest -v test_hfsy_client.py` and confirm failures are caused by the missing module.
 - [ ] Implement the smallest standard-library client contract that passes the request/parse tests.
 - [ ] Re-run `python3 -m unittest -v test_hfsy_client.py` and confirm all tests pass.
@@ -41,7 +41,7 @@
 - Modify: `style.css`
 - Create: `test_hfsy_frontend.py`
 
-- [ ] Write failing static contract tests for all five options, provider grouping, model-specific controls, material limits, and retry restoration.
+- [ ] Write failing static contract tests for all four options, provider grouping, model-specific controls, material limits, and retry restoration.
 - [ ] Run `python3 -m unittest -v test_hfsy_frontend.py` and confirm the expected failures.
 - [ ] Implement catalog-driven UI updates and client-side validation.
 - [ ] Re-run focused frontend tests.

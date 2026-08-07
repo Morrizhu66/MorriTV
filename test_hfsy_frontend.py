@@ -14,18 +14,15 @@ class HfsyFrontendContractTests(unittest.TestCase):
     def test_catalog_exposes_all_confirmed_hfsy_options_and_no_sd_25(self):
         for profile in (
             "hfsy-gpt-image-2", "hfsy-gpt-image-2pro", "hfsy-nano-banana-2",
-            "hfsy-nano-banana-pro", "hfsy-minimax-h3",
+            "hfsy-nano-banana-pro",
         ):
             self.assertIn(profile, self.js)
+        self.assertNotIn("hfsy-minimax-h3", self.js)
         self.assertNotIn("sd-2.5", self.js + self.html)
         self.assertIn("HFSY API", self.js)
 
     def test_model_change_applies_dynamic_ratio_resolution_duration_and_material_limits(self):
         self.assertIn("profile.addEventListener('change', applySelectedModel);", self.js)
-        self.assertIn("maxImages: 5", self.js)
-        self.assertIn("maxAudios: 1", self.js)
-        self.assertIn("accept: 'image/*,audio/*'", self.js)
-        self.assertIn("promptLimit: 2000", self.js)
         self.assertIn("document.querySelector('#duration-field').classList.toggle('hidden', !model.duration);", self.js)
 
     def test_health_uses_hfsy_readiness_for_hfsy_models(self):

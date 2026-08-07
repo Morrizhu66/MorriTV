@@ -9,7 +9,6 @@
 - 图片：Seedream 5.0 Pro、Seedream 4.3，支持多张参考图和原图预览。
 - 视频：Seedance Reference Video，支持图片、视频、音频参考素材及带音频视频生成。
 - HFSY 图片：GPT Image 2（`gpt-image-2`）、GPT Image 2 Pro（`gpt-image-2pro`）、Nano Banana 2（`nano-banana-2`）、Nano Banana 2 Pro（`nano-banana-pro`）。
-- HFSY 视频：Minimax H3（`minimax-h3`），支持 5–15 秒文生视频、图生视频和单条音频参考，不支持视频参考。
 - 任务：一次提交对应一个完整任务；多行提示词不会被拆分。
 - 本地记录：任务状态保存在本机，重启后可以恢复查看。
 

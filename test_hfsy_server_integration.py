@@ -26,28 +26,19 @@ class HfsyServerIntegrationTests(unittest.TestCase):
         server.UPLOADS_DIR = self.original_uploads
         self.temp_dir.cleanup()
 
-    def test_accepts_hfsy_image_and_video_profiles_as_independent_provider_tasks(self):
+    def test_accepts_hfsy_image_profile_as_independent_provider_task(self):
         with patch.object(server.EXECUTOR, "submit") as submit:
             image = server.create_tasks(Fields({
                 "kind": "image", "profile": "hfsy-gpt-image-2", "prompts": "poster",
                 "ratio": "1:1", "resolution": "1K",
             }))[0]
-            video = server.create_tasks(Fields({
-                "kind": "video", "profile": "hfsy-minimax-h3", "prompts": "trailer",
-                "ratio": "9:16", "resolution": "large", "duration": "10",
-            }))[0]
 
         self.assertEqual(image["provider"], "hfsy")
-        self.assertEqual(video["provider"], "hfsy")
-        self.assertEqual(submit.call_count, 2)
+        self.assertEqual(submit.call_count, 1)
 
-    def test_rejects_kind_mismatch_and_minimax_video_reference_before_queueing(self):
+    def test_rejects_hfsy_image_model_for_video_task(self):
         with self.assertRaisesRegex(ValueError, "图片模型"):
             server.validate_task_input("video", "hfsy-gpt-image-2", "x", "1:1", "10", "1K", [])
-
-        references = [{"path": "", "url": "https://cdn.example/ref.mp4", "mime": "video/mp4", "name": "ref.mp4"}]
-        with self.assertRaisesRegex(ValueError, "不支持视频参考"):
-            server.validate_task_input("video", "hfsy-minimax-h3", "x", "9:16", "10", "large", references)
 
     def test_hfsy_task_uses_only_hfsy_key_and_does_not_start_ark_subprocess(self):
         task = {

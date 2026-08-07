@@ -30,10 +30,6 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
         "model": "nano-banana-pro", "kind": "image", "family": "nano", "max_images": 7,
         "resolutions": ("1K", "2K", "4K"),
     },
-    "hfsy-minimax-h3": {
-        "model": "minimax-h3", "kind": "video", "family": "minimax", "max_images": 5,
-        "max_audios": 1, "resolutions": ("large", "small"),
-    },
 }
 
 GPT_SIZES = {
@@ -67,8 +63,6 @@ def build_generation_request(
     spec = MODEL_SPECS[profile]
     model = spec["model"]
     images = [url for url, mime in references if mime.startswith("image/")]
-    audios = [url for url, mime in references if mime.startswith("audio/")]
-    videos = [url for url, mime in references if mime.startswith("video/")]
 
     if len(images) > spec["max_images"]:
         raise ValueError(f"{model} 最多支持 {spec['max_images']} 张参考图")
@@ -100,27 +94,7 @@ def build_generation_request(
             "generationConfig": {"imageConfig": {"imageSize": resolution, "aspectRatio": ratio}},
         }
 
-    if videos:
-        raise ValueError("Minimax H3 不支持视频参考")
-    if len(audios) > spec["max_audios"]:
-        raise ValueError("Minimax H3 最多支持 1 条音频")
-    seconds = int(duration)
-    if not 5 <= seconds <= 15:
-        raise ValueError("Minimax H3 时长必须为 5–15 秒")
-    if len(prompt) > 2000:
-        raise ValueError("Minimax H3 提示词不能超过 2000 字")
-    if ratio not in {"9:16", "16:9"}:
-        raise ValueError("Minimax H3 仅支持 9:16 或 16:9")
-    return "/v1/video/create", {
-        "model": model,
-        "orientation": "portrait" if ratio == "9:16" else "landscape",
-        "prompt": prompt,
-        "images": images,
-        "audios": audios,
-        "duration": seconds,
-        "size": resolution,
-        "watermark": False,
-    }
+    raise ValueError("不支持的 HFSY 模型")
 
 
 def _first_nano_url(payload: dict[str, Any]) -> str:

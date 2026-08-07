@@ -1,8 +1,8 @@
-# HFSY 图像与视频模型接入设计
+# HFSY 图像模型接入设计
 
 ## 目标
 
-在保留现有 Ark / Seedream / Seedance 链路的前提下，将 HFSY 作为独立供应商接入，新增 GPT Image 2、GPT Image 2 Pro、Nano Banana 2、Nano Banana 2 Pro 和 Minimax H3 五个模型选项。
+在保留现有 Ark / Seedream / Seedance 链路的前提下，将 HFSY 作为独立供应商接入，新增 GPT Image 2、GPT Image 2 Pro、Nano Banana 2 和 Nano Banana 2 Pro 四个图片模型选项。Minimax H3 不再接入。
 
 ## 架构
 
@@ -14,7 +14,7 @@
 
 ## 安全与失败处理
 
-HFSY 密钥只从 `HFSY_API_KEY` 环境变量或已忽略的 `.env` 读取，不进入源码、任务历史和前端响应。HTTP 错误、非法 JSON、远程失败状态和轮询超时都转成可读的本地任务错误。Minimax H3 严格限制为图片最多 5 张、音频最多 1 条、不允许视频参考、提示词最多 2000 字且时长 5–15 秒。
+HFSY 密钥只从 `HFSY_API_KEY` 环境变量或已忽略的 `.env` 读取，不进入源码、任务历史和前端响应。HTTP 错误、非法 JSON、远程失败状态和轮询超时都转成可读的本地任务错误。
 
 ## 验证
 
