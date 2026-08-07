@@ -51,6 +51,9 @@ class HfsyFrontendContractTests(unittest.TestCase):
         self.assertNotIn("reference_urls", self.js)
         self.assertIn("document.querySelector('#dropzone').classList.remove('hidden')", self.js)
 
+    def test_gallery_hides_only_legacy_failures(self):
+        self.assertIn("task.status !== 'failed' || task.history_version >= 2", self.js)
+
 
 if __name__ == "__main__":
     unittest.main()

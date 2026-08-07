@@ -106,6 +106,13 @@ class TaskHistoryRecoveryTests(unittest.TestCase):
         self.assertEqual(reference["url"], "/media/uploads/batch-1/01-look.png")
         self.assertNotIn("path", reference)
 
+    def test_legacy_history_defaults_to_version_one_and_new_snapshots_use_two(self):
+        legacy = self.server.restore_history_task(task_snapshot("legacy", "failed"))
+        current = task_snapshot("current", "failed", history_version=2)
+
+        self.assertEqual(legacy["history_version"], 1)
+        self.assertEqual(self.server.history_task_snapshot(current)["history_version"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -124,10 +124,13 @@ def now() -> float:
     return round(time.time(), 3)
 
 
+HISTORY_VERSION = 2
+
+
 PERSISTED_TASK_FIELDS = (
     "id", "kind", "provider", "profile", "prompt", "status", "created_at", "started_at",
     "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
-    "local_image_url", "local_video_url", "error", "queue_position",
+    "local_image_url", "local_video_url", "error", "queue_position", "history_version",
 )
 
 
@@ -174,6 +177,7 @@ def restore_history_task(snapshot: dict[str, Any]) -> dict[str, Any] | None:
         "local_video_url": str(snapshot.get("local_video_url") or ""),
         "error": str(snapshot.get("error") or ""),
         "queue_position": snapshot.get("queue_position"),
+        "history_version": int(snapshot.get("history_version") or 1),
     }
     return task
 
@@ -250,6 +254,7 @@ def public_task(task: dict[str, Any]) -> dict[str, Any]:
             "id", "kind", "provider", "profile", "prompt", "status", "created_at", "started_at",
             "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
             "local_image_url", "video_url", "local_video_url", "error", "queue_position",
+            "history_version",
         )
     }
     public["reference_files"] = [
@@ -371,6 +376,7 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
                 "local_video_url": "",
                 "error": "",
                 "queue_position": len([t for t in TASKS.values() if t["status"] == "queued"]) + 1,
+                "history_version": HISTORY_VERSION,
             }
             TASKS[task_id] = task
             created.append(task)

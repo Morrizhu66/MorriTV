@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import io
 import re
 import uuid
 from pathlib import Path
@@ -17,6 +18,9 @@ REQUIRED_KEYS = (
     "TOS_BUCKET",
 )
 SAFE_SUFFIX = re.compile(r"^\.[A-Za-z0-9]{1,10}$")
+IMAGE_COMPRESSION_TRIGGER = 1_000_000
+IMAGE_UPLOAD_LIMIT = 1_800_000
+IMAGE_MAX_EDGE = 2048
 
 
 def config_status(read_value: Callable[[str], str]) -> dict[str, Any]:
@@ -56,6 +60,36 @@ def _client(config: dict[str, Any], tos_module):
     return tos_module.TosClientV2(config["ak"], config["sk"], config["endpoint"], config["region"])
 
 
+def _prepared_content(source: Path, mime: str) -> tuple[bytes, str, str]:
+    content = source.read_bytes()
+    if not mime.startswith("image/") or len(content) < IMAGE_COMPRESSION_TRIGGER:
+        return content, mime, source.suffix.lower()
+    try:
+        from PIL import Image, ImageOps
+    except ImportError as exc:
+        raise RuntimeError("未安装 Pillow，无法压缩 HFSY 参考图") from exc
+
+    with Image.open(io.BytesIO(content)) as opened:
+        image = ImageOps.exif_transpose(opened)
+        image.thumbnail((IMAGE_MAX_EDGE, IMAGE_MAX_EDGE), Image.Resampling.LANCZOS)
+        if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
+            rgba = image.convert("RGBA")
+            background = Image.new("RGB", rgba.size, "white")
+            background.paste(rgba, mask=rgba.getchannel("A"))
+            image = background
+        else:
+            image = image.convert("RGB")
+
+        prepared = b""
+        for quality in (88, 82, 76, 70, 64):
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=quality, optimize=True)
+            prepared = output.getvalue()
+            if len(prepared) <= IMAGE_UPLOAD_LIMIT:
+                break
+        return prepared, "image/jpeg", ".jpg"
+
+
 def upload_reference(
     reference: dict[str, str],
     read_value: Callable[[str], str],
@@ -67,7 +101,9 @@ def upload_reference(
     source = Path(reference.get("path") or "")
     if not source.is_file():
         raise RuntimeError(f"参考素材不存在：{reference.get('name') or source.name}")
-    suffix = source.suffix.lower()
+    content, upload_mime, suffix = _prepared_content(
+        source, str(reference.get("mime") or "application/octet-stream")
+    )
     if not SAFE_SUFFIX.fullmatch(suffix):
         suffix = ""
     date_path = dt.datetime.now(dt.timezone.utc).strftime("%Y/%m/%d")
@@ -75,8 +111,8 @@ def upload_reference(
     client = _client(config, tos_module)
     client.put_object(
         config["bucket"], object_key,
-        content=source.read_bytes(),
-        content_type=reference.get("mime") or "application/octet-stream",
+        content=content,
+        content_type=upload_mime,
     )
     output = client.pre_signed_url(
         tos_module.HttpMethodType.Http_Method_Get,
@@ -88,7 +124,7 @@ def upload_reference(
         raise RuntimeError("TOS 未返回预签名 URL")
     return {
         "name": str(reference.get("name") or source.name),
-        "mime": str(reference.get("mime") or "application/octet-stream"),
+        "mime": upload_mime,
         "url": signed_url,
         "tos_key": object_key,
     }

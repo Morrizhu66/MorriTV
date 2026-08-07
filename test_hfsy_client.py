@@ -145,6 +145,31 @@ class HfsyClientContractTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[1]["reference_images"], ["https://cdn.example/reference.png"])
         self.assertEqual(result["result_url"], "https://cdn.example/result.png")
 
+    def test_generate_retries_one_transient_reference_fetch_failure(self):
+        from hfsy_client import generate
+
+        responses = [
+            RuntimeError("HFSY HTTP 400: failed to load fileData image: context deadline exceeded"),
+            {"data": [{"url": "https://cdn.example/result.png"}]},
+        ]
+        with patch("hfsy_client.request_json", side_effect=responses) as request:
+            result = generate(
+                "hfsy-nano-banana-pro", "edit", "1:1", "1K",
+                [{"url": "https://tos.example/ref.jpg", "mime": "image/jpeg"}],
+                "10", "secret", sleep=lambda _: None,
+            )
+
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(result["result_url"], "https://cdn.example/result.png")
+
+    def test_generate_does_not_retry_non_transient_bad_request(self):
+        from hfsy_client import generate
+
+        with patch("hfsy_client.request_json", side_effect=RuntimeError("HFSY HTTP 400: invalid prompt")) as request:
+            with self.assertRaisesRegex(RuntimeError, "invalid prompt"):
+                generate("hfsy-nano-banana-pro", "edit", "1:1", "1K", [], "10", "secret", sleep=lambda _: None)
+        self.assertEqual(request.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

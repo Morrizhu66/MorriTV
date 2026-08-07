@@ -191,7 +191,8 @@ function taskSignature(task) {
 }
 async function loadTasks() {
   try {
-    const response = await fetch('/api/tasks'); const { tasks } = await response.json();
+    const response = await fetch('/api/tasks'); const payload = await response.json();
+    const tasks = payload.tasks.filter(task => task.status !== 'failed' || task.history_version >= 2);
     if (!tasks.length) {
       if (!gallery.querySelector('.empty')) gallery.innerHTML = '<div class="empty"><span>◌</span><p>还没有任务</p><small>从左侧输入提示词，第一张成片会出现在这里。</small></div>';
       return;

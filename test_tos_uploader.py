@@ -1,7 +1,10 @@
 import tempfile
 import unittest
+import io
 from pathlib import Path
 from types import SimpleNamespace
+
+from PIL import Image
 
 
 class FakeClient:
@@ -91,6 +94,31 @@ class TosUploaderTests(unittest.TestCase):
         delete_hosted_references(references, CONFIG.get, tos_module=fake_tos)
 
         self.assertEqual(fake_tos.clients[0].deletes, [("model-studio-private", "hfsy-temp/a.png")])
+
+    def test_large_png_is_uploaded_as_a_smaller_jpeg_without_changing_source(self):
+        from tos_uploader import upload_reference
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "large.png"
+            image = Image.effect_noise((3000, 2400), 100).convert("RGB")
+            image.save(source, format="PNG")
+            original = source.read_bytes()
+            fake_tos = FakeTos()
+            hosted = upload_reference(
+                {"path": str(source), "name": "large.png", "mime": "image/png"},
+                CONFIG.get,
+                tos_module=fake_tos,
+            )
+            self.assertEqual(source.read_bytes(), original)
+
+        _, key, kwargs = fake_tos.clients[0].puts[0]
+        uploaded = kwargs["content"]
+        self.assertLess(len(uploaded), 1_800_000)
+        self.assertTrue(key.endswith(".jpg"))
+        self.assertEqual(kwargs["content_type"], "image/jpeg")
+        self.assertEqual(hosted["mime"], "image/jpeg")
+        with Image.open(io.BytesIO(uploaded)) as prepared:
+            self.assertLessEqual(max(prepared.size), 2048)
 
 
 if __name__ == "__main__":

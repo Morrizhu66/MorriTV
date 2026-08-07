@@ -2,7 +2,7 @@
 set -e
 cd "$(dirname "$0")"
 
-if ! PYTHONPATH=.deps python3 -c 'import tos' >/dev/null 2>&1; then
+if ! PYTHONPATH=.deps python3 -c 'import tos; from PIL import Image' >/dev/null 2>&1; then
   echo "首次启动：正在安装 TOS 依赖……"
   python3 -m pip install --target .deps -r requirements.txt
 fi

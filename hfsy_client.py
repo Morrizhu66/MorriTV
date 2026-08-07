@@ -188,7 +188,16 @@ def generate(
             raise ValueError("HFSY 参考素材必须是公网 URL，不支持直接上传本地文件")
 
     endpoint, payload = build_generation_request(profile, prompt, ratio, resolution, uploaded, duration)
-    parsed = parse_generation_response(request_json(endpoint, payload, api_key))
+    try:
+        initial_response = request_json(endpoint, payload, api_key)
+    except RuntimeError as exc:
+        message = str(exc).lower()
+        transient = "http 504" in message or "failed to load filedata" in message or "context deadline exceeded" in message
+        if not transient:
+            raise
+        sleep(1)
+        initial_response = request_json(endpoint, payload, api_key)
+    parsed = parse_generation_response(initial_response)
     for _ in range(640):
         if parsed["status"] == "SUCCESS":
             if not parsed["result_url"]:
