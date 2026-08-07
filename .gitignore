@@ -1,0 +1,24 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Generated user data
+uploads/
+results/
+task-history.jsonl
+*.log
+
+# Local notes and prompt exports
+latest-video-prompt.md
+previous-video-prompt.md
+今日视频*.md
+
+# Python / macOS / local tooling
+__pycache__/
+*.py[cod]
+.DS_Store
+.codegraph/
+.venv/
+venv/
+

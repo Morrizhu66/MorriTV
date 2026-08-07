@@ -1,0 +1,36 @@
+{
+  "seedream43-ark-direct": {
+    "backend": "ark_openai_image",
+    "base_url": "https://ark-cn-beijing.bytedance.net/api/v3",
+    "api_key_env": "ARK_API_KEY",
+    "model": "ep-20260422194853-4h52t",
+    "size": "2K",
+    "response_format": "url",
+    "extra_body": {
+      "watermark": true
+    }
+  },
+  "seedream50-pro-ark-direct": {
+    "backend": "ark_openai_image",
+    "base_url": "https://ark-cn-beijing.bytedance.net/api/v3",
+    "api_key_env": "ARK_API_KEY",
+    "model": "ep-20260709110342-s2d4w",
+    "size": "2K",
+    "response_format": "url",
+    "extra_body": {
+      "watermark": true
+    }
+  },
+  "seedance-reference-video-ark-direct": {
+    "backend": "ark_content_generation",
+    "endpoint": "https://ark-cn-beijing.bytedance.net/api/v3/contents/generations/tasks",
+    "api_key_env": "ARK_API_KEY",
+    "model": "ep-20260206204956-69n25",
+    "ratio": "9:16",
+    "duration": 15,
+    "generate_audio": true,
+    "watermark": false,
+    "timeout_seconds": 1800,
+    "poll_interval_seconds": 10
+  }
+}

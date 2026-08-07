@@ -1,0 +1,40 @@
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parent
+ARK_ENDPOINT_URL = (
+    "https://cloud.bytedance.net/ark/region:ark+cn-beijing/endpoint/detail?"
+    "Id=ep-20260422194853-4h52t&Tab=overview&arkAccountId=2110547014&"
+    "arkProjectName=ark_project_20260413_9u9f9&type=&x-bc-region-id=bytedance&"
+    "x-resource-account=public"
+)
+
+
+class GithubPackagingTests(unittest.TestCase):
+    def test_readme_links_to_the_required_ark_endpoint(self):
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn(ARK_ENDPOINT_URL, readme)
+        self.assertIn("ARK_API_KEY", readme)
+        self.assertNotIn("/Users/bytedance", readme)
+
+    def test_runtime_files_and_secrets_are_ignored(self):
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        for entry in (".env", "uploads/", "results/", "task-history.jsonl", "*.log"):
+            self.assertIn(entry, gitignore)
+
+    def test_public_env_example_contains_placeholders_only(self):
+        example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("ARK_API_KEY=", example)
+        self.assertIn("SEEDANCE_ARK_API_KEY=", example)
+        self.assertNotRegex(example, r"ark-[A-Za-z0-9_-]{10,}")
+
+    def test_server_uses_the_bundled_model_caller(self):
+        import server
+
+        self.assertTrue(server.SKILL_CALLER.is_relative_to(ROOT))
+        self.assertTrue(server.SKILL_CALLER.is_file())
+
+
+if __name__ == "__main__":
+    unittest.main()
