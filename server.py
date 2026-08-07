@@ -34,14 +34,17 @@ RESULTS_DIR = APP_DIR / "results"
 HISTORY_FILE = APP_DIR / "task-history.jsonl"
 HOST = "127.0.0.1"
 PORT = int(os.getenv("MODEL_STUDIO_PORT", "4178"))
-MAX_WORKERS = 2
+IMAGE_MAX_WORKERS = 8
+VIDEO_MAX_WORKERS = 4
 
 for folder in (UPLOADS_DIR, RESULTS_DIR):
     folder.mkdir(parents=True, exist_ok=True)
 
 TASKS: dict[str, dict[str, Any]] = {}
 LOCK = threading.RLock()
-EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="model-studio")
+IMAGE_EXECUTOR = ThreadPoolExecutor(max_workers=IMAGE_MAX_WORKERS, thread_name_prefix="model-studio-image")
+VIDEO_EXECUTOR = ThreadPoolExecutor(max_workers=VIDEO_MAX_WORKERS, thread_name_prefix="model-studio-video")
+EXECUTORS = {"image": IMAGE_EXECUTOR, "video": VIDEO_EXECUTOR}
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 ARK_HOST = "ark-cn-beijing.bytedance.net"
 PROXY_ENV_KEYS = (
@@ -93,7 +96,7 @@ def health_flags() -> dict[str, Any]:
         "video_ready": "SEEDANCE_ARK_API_KEY" in keys,
         "hfsy_ready": "HFSY_API_KEY" in keys,
         "tos_ready": tos_status["ready"],
-        "workers": MAX_WORKERS,
+        "workers": {"image": IMAGE_MAX_WORKERS, "video": VIDEO_MAX_WORKERS},
     }
 
 
@@ -375,13 +378,16 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
                 "video_url": "",
                 "local_video_url": "",
                 "error": "",
-                "queue_position": len([t for t in TASKS.values() if t["status"] == "queued"]) + 1,
+                "queue_position": len([
+                    queued for queued in TASKS.values()
+                    if queued["status"] == "queued" and queued["kind"] == kind
+                ]) + 1,
                 "history_version": HISTORY_VERSION,
             }
             TASKS[task_id] = task
             created.append(task)
             record_task_event("queued", task)
-            EXECUTOR.submit(run_task, task_id)
+            EXECUTORS[kind].submit(run_task, task_id)
     return created
 
 

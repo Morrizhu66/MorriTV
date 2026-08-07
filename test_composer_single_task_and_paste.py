@@ -42,7 +42,7 @@ class ComposerSingleTaskAndPasteTests(unittest.TestCase):
             "profile": "seedream50-pro-ark-direct",
             "prompts": "第一段提示词\n第二段提示词",
         })
-        with patch.object(server.EXECUTOR, "submit") as submit:
+        with patch.object(server.IMAGE_EXECUTOR, "submit") as submit:
             tasks = server.create_tasks(fields)
 
         self.assertEqual(len(tasks), 1)

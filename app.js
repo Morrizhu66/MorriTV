@@ -227,9 +227,10 @@ async function updateHealth() {
     const data = await (await fetch('/api/health')).json();
     const model = selectedModel();
     const ready = model.provider === 'hfsy' ? data.hfsy_ready : (state.kind === 'video' ? data.video_ready : data.image_ready);
+    const workerCount = data.workers[state.kind];
     chip.className = `system-status ${ready ? 'ready' : 'error'}`;
     text.textContent = ready
-      ? `${model.provider === 'hfsy' ? 'HFSY' : 'ARK'} 凭证已就绪 · ${data.workers} 个并发制作位`
+      ? `${model.provider === 'hfsy' ? 'HFSY' : 'ARK'} 凭证已就绪 · ${workerCount} 个并发制作位`
       : model.provider === 'hfsy' ? '未找到 HFSY_API_KEY 配置' : (state.kind === 'video' ? '未找到 SEEDANCE_ARK_API_KEY 配置' : '未找到 ARK_API_KEY 配置');
     if (model.provider === 'hfsy' && !data.tos_ready) document.querySelector('#reference-hint').textContent = '未配置 TOS，无法上传本地素材';
   } catch { chip.className = 'system-status error'; text.textContent = '本地服务不可用'; }

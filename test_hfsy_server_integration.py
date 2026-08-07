@@ -27,7 +27,7 @@ class HfsyServerIntegrationTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_accepts_hfsy_image_profile_as_independent_provider_task(self):
-        with patch.object(server.EXECUTOR, "submit") as submit:
+        with patch.object(server.IMAGE_EXECUTOR, "submit") as submit:
             image = server.create_tasks(Fields({
                 "kind": "image", "profile": "hfsy-gpt-image-2", "prompts": "poster",
                 "ratio": "1:1", "resolution": "1K",
@@ -69,7 +69,7 @@ class HfsyServerIntegrationTests(unittest.TestCase):
         self.assertNotIn("do-not-leak", repr(health))
 
     def test_hfsy_accepts_public_urls_and_local_files_when_tos_is_ready(self):
-        with patch.object(server.EXECUTOR, "submit"):
+        with patch.object(server.IMAGE_EXECUTOR, "submit"):
             task = server.create_tasks(Fields({
                 "kind": "image", "profile": "hfsy-gpt-image-2", "prompts": "edit",
                 "ratio": "1:1", "resolution": "1K",
