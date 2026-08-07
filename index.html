@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Model Studio · Seedream / Seedance</title>
+    <title>Model Studio · Multi-provider Image / Video</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -24,7 +24,7 @@
       <section class="composer">
         <div class="section-kicker">NEW PRODUCTION <span id="kind-label">/ IMAGE</span></div>
         <h1 id="title">把一个想法<br /><i>做成图像。</i></h1>
-        <p class="intro" id="intro">使用 Seedream 直接生成。每行一条提示词，即可排入批量队列。</p>
+        <p class="intro" id="intro">选择模型后直接生成，每次提交对应一个完整任务。</p>
 
         <form id="generation-form">
           <div class="field model-field">
@@ -35,10 +35,10 @@
             </select>
           </div>
 
-          <div id="video-options" class="video-options hidden">
-            <div class="field"><label for="ratio">画幅</label><select id="ratio" name="ratio"><option>9:16</option><option>16:9</option><option>1:1</option></select></div>
-            <div class="field"><label for="duration">时长</label><select id="duration" name="duration"><option value="15">15 秒</option><option value="10">10 秒</option><option value="5">5 秒</option></select></div>
-            <div class="field"><label for="resolution">清晰度</label><select id="resolution" name="resolution"><option value="720p">720p（Seedance Fast）</option></select></div>
+          <div id="generation-options" class="video-options hidden">
+            <div class="field"><label for="ratio">画幅</label><select id="ratio" name="ratio"></select></div>
+            <div class="field" id="duration-field"><label for="duration">时长</label><select id="duration" name="duration"></select></div>
+            <div class="field"><label for="resolution">清晰度</label><select id="resolution" name="resolution"></select></div>
           </div>
 
           <div class="field prompt-field">

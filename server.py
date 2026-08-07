@@ -23,6 +23,9 @@ from typing import Any
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import urlopen
 
+import hfsy_client
+import tos_uploader
+
 APP_DIR = Path(__file__).resolve().parent
 SKILL_CALLER = APP_DIR / "tools" / "call_business_model.py"
 PRIVATE_ENV = APP_DIR / ".env"
@@ -81,6 +84,19 @@ def private_env_value(name: str) -> str:
     return ""
 
 
+def health_flags() -> dict[str, Any]:
+    keys = set(configured_env_keys()) | set(os.environ)
+    tos_status = tos_uploader.config_status(private_env_value)
+    return {
+        "ok": True,
+        "image_ready": "ARK_API_KEY" in keys,
+        "video_ready": "SEEDANCE_ARK_API_KEY" in keys,
+        "hfsy_ready": "HFSY_API_KEY" in keys,
+        "tos_ready": tos_status["ready"],
+        "workers": MAX_WORKERS,
+    }
+
+
 def model_child_env(kind: str) -> dict[str, str]:
     """Build a direct Ark environment so local/system proxies cannot stall model calls."""
     child_env = os.environ.copy()
@@ -109,7 +125,7 @@ def now() -> float:
 
 
 PERSISTED_TASK_FIELDS = (
-    "id", "kind", "profile", "prompt", "status", "created_at", "started_at",
+    "id", "kind", "provider", "profile", "prompt", "status", "created_at", "started_at",
     "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
     "local_image_url", "local_video_url", "error", "queue_position",
 )
@@ -123,6 +139,7 @@ def history_task_snapshot(task: dict[str, Any]) -> dict[str, Any]:
             "name": str(reference.get("name") or "reference"),
             "path": str(reference.get("path") or ""),
             "mime": str(reference.get("mime") or "application/octet-stream"),
+            "url": str(reference.get("url") or ""),
         }
         for reference in task.get("reference_files") or []
         if isinstance(reference, dict)
@@ -140,6 +157,7 @@ def restore_history_task(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     task = {
         "id": task_id,
         "kind": kind,
+        "provider": str(snapshot.get("provider") or ("hfsy" if hfsy_client.is_hfsy_profile(str(snapshot.get("profile") or "")) else "ark")),
         "profile": str(snapshot.get("profile") or ""),
         "prompt": prompt,
         "status": str(snapshot.get("status") or "failed"),
@@ -214,7 +232,7 @@ def public_reference(reference: dict[str, Any]) -> dict[str, str]:
     public = {
         "name": str(reference.get("name") or "reference"),
         "mime": str(reference.get("mime") or "application/octet-stream"),
-        "url": "",
+        "url": str(reference.get("url") or ""),
     }
     try:
         relative = Path(str(reference.get("path") or "")).resolve().relative_to(UPLOADS_DIR.resolve())
@@ -229,7 +247,7 @@ def public_task(task: dict[str, Any]) -> dict[str, Any]:
     public = {
         key: task.get(key)
         for key in (
-            "id", "kind", "profile", "prompt", "status", "created_at", "started_at",
+            "id", "kind", "provider", "profile", "prompt", "status", "created_at", "started_at",
             "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
             "local_image_url", "video_url", "local_video_url", "error", "queue_position",
         )
@@ -263,28 +281,72 @@ def copy_references(task_id: str, fields: cgi.FieldStorage) -> list[dict[str, st
     return copied
 
 
+def parse_reference_urls(raw: str) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    for value in (line.strip() for line in raw.splitlines()):
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(f"参考素材 URL 无效：{value[:100]}")
+        name = Path(parsed.path).name or f"reference-{len(references) + 1}"
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        references.append({"name": name, "path": "", "url": value, "mime": mime})
+    return references
+
+
+def validate_task_input(
+    kind: str,
+    profile: str,
+    prompt: str,
+    ratio: str,
+    duration: str,
+    resolution: str,
+    references: list[dict[str, str]],
+) -> str:
+    """Validate provider-specific input before a paid request is queued."""
+    if kind not in {"image", "video"}:
+        raise ValueError("不支持的任务类型")
+    if not prompt:
+        raise ValueError("至少输入一条提示词")
+    if hfsy_client.is_hfsy_profile(profile):
+        spec = hfsy_client.MODEL_SPECS[profile]
+        if spec["kind"] != kind:
+            raise ValueError("图片模型与视频任务类型不匹配" if spec["kind"] == "image" else "视频模型与图片任务类型不匹配")
+        local_references = [ref for ref in references if ref.get("path") and not ref.get("url")]
+        if local_references:
+            tos_status = tos_uploader.config_status(private_env_value)
+            if not tos_status["ready"]:
+                raise RuntimeError(f"HFSY 本地素材需要配置 TOS：{', '.join(tos_status['missing'])}")
+        reference_contract = [
+            (str(ref.get("url") or f"https://tos-upload.invalid/{index}"), ref.get("mime", ""))
+            for index, ref in enumerate(references)
+        ]
+        hfsy_client.build_generation_request(profile, prompt, ratio, resolution, reference_contract, duration)
+        return "hfsy"
+    if kind == "video" and profile != "seedance-reference-video-ark-direct":
+        raise ValueError("视频任务请使用 Seedance Reference Video")
+    if kind == "image" and profile not in {"seedream43-ark-direct", "seedream50-pro-ark-direct"}:
+        raise ValueError("图片任务请选择可用的 Seedream 模型")
+    if kind == "video" and resolution != "720p":
+        raise ValueError("当前 Seedance Fast 仅支持 720p；已阻止提交无效的 1080p 请求。")
+    return "ark"
+
+
 def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
     kind = fields.getfirst("kind", "image")
     profile = fields.getfirst("profile", "")
     raw_prompts = fields.getfirst("prompts", "").strip()
     prompts = [raw_prompts] if raw_prompts else []
-    if kind not in {"image", "video"}:
-        raise ValueError("不支持的任务类型")
-    if not prompts:
-        raise ValueError("至少输入一条提示词")
-    expected_profile = "seedance-reference-video-ark-direct" if kind == "video" else None
-    if expected_profile and profile != expected_profile:
-        raise ValueError("视频任务请使用 Seedance Reference Video")
-    if kind == "image" and profile not in {"seedream43-ark-direct", "seedream50-pro-ark-direct"}:
-        raise ValueError("图片任务请选择可用的 Seedream 模型")
     shared_id = uuid.uuid4().hex[:10]
     references = copy_references(shared_id, fields)
-    print(f"[{time.strftime('%H:%M:%S')}] queued {kind} batch: {len(prompts)} task(s), {len(references)} reference file(s)")
+    if hfsy_client.is_hfsy_profile(profile):
+        references.extend(parse_reference_urls(fields.getfirst("reference_urls", "")))
     ratio = fields.getfirst("ratio", "9:16")
     duration = fields.getfirst("duration", "15")
     resolution = fields.getfirst("resolution", "720p")
-    if kind == "video" and resolution != "720p":
-        raise ValueError("当前 Seedance Fast 仅支持 720p；已阻止提交无效的 1080p 请求。")
+    provider = validate_task_input(kind, profile, raw_prompts, ratio, duration, resolution, references)
+    print(f"[{time.strftime('%H:%M:%S')}] queued {provider}/{kind}: {len(prompts)} task(s), {len(references)} reference file(s)")
     created: list[dict[str, Any]] = []
     with LOCK:
         for prompt in prompts:
@@ -292,6 +354,7 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
             task = {
                 "id": task_id,
                 "kind": kind,
+                "provider": provider,
                 "profile": profile,
                 "prompt": prompt,
                 "status": "queued",
@@ -343,6 +406,30 @@ def download_image_result(image_url: str, task_id: str) -> str:
     return f"/media/results/{target.name}"
 
 
+def run_hfsy_generation(task: dict[str, Any], api_key: str) -> dict[str, str]:
+    prepared: list[dict[str, str]] = []
+    hosted: list[dict[str, str]] = []
+    try:
+        for reference in task["reference_files"]:
+            if reference.get("url"):
+                prepared.append(reference)
+            else:
+                uploaded = tos_uploader.upload_reference(reference, private_env_value)
+                prepared.append(uploaded)
+                hosted.append(uploaded)
+        return hfsy_client.generate(
+            profile=task["profile"], prompt=task["prompt"], ratio=task["ratio"],
+            resolution=task["resolution"], references=prepared,
+            duration=task["duration"], api_key=api_key,
+        )
+    finally:
+        try:
+            tos_uploader.delete_hosted_references(hosted, private_env_value)
+        except Exception as exc:
+            # Cleanup must not hide a successful generation or its real failure.
+            print(f"[{time.strftime('%H:%M:%S')}] TOS temporary-object cleanup failed: {exc}")
+
+
 def run_task(task_id: str) -> None:
     with LOCK:
         task = TASKS.get(task_id)
@@ -353,31 +440,38 @@ def run_task(task_id: str) -> None:
         task["queue_position"] = None
         record_task_event("started", task)
 
-    command = [sys.executable, str(SKILL_CALLER), "run", "--profile", task["profile"], "--prompt", task["prompt"]]
     references = task["reference_files"]
-    if task["kind"] == "image":
-        command.extend(arg for ref in references if ref["mime"].startswith("image/") for arg in ("--image-file", ref["path"]))
-    else:
-        for ref in references:
-            if ref["mime"].startswith("image/"):
-                command.extend(("--image-file", ref["path"]))
-            elif ref["mime"].startswith("video/"):
-                command.extend(("--video-file", ref["path"]))
-            elif ref["mime"].startswith("audio/"):
-                command.extend(("--audio-file", ref["path"]))
-        output_path = RESULTS_DIR / f"{task_id}.mp4"
-        command.extend(("--ratio", task["ratio"], "--duration", task["duration"], "--resolution", task["resolution"], "--output-file", str(output_path)))
-
     try:
-        print(f"[{time.strftime('%H:%M:%S')}] starting {task['kind']} task {task_id}: {len(references)} reference file(s)")
-        child_env = model_child_env(task["kind"])
-        completed = subprocess.run(
-            command, cwd=APP_DIR, capture_output=True, text=True, timeout=1950, check=False, env=child_env
-        )
-        result = parse_model_result(completed.stdout)
-        if completed.returncode != 0:
-            raise RuntimeError(result.get("error") or "模型调用失败")
-        image_url = str(result.get("image_url") or "")
+        print(f"[{time.strftime('%H:%M:%S')}] starting {task.get('provider', 'ark')}/{task['kind']} task {task_id}: {len(references)} reference file(s)")
+        if task.get("provider") == "hfsy":
+            api_key = private_env_value("HFSY_API_KEY")
+            if not api_key:
+                raise RuntimeError("未配置 HFSY_API_KEY。请在 .env 中填写 HFSY API Key。")
+            result = run_hfsy_generation(task, api_key)
+            image_url = str(result.get("result_url") or "") if task["kind"] == "image" else ""
+            video_url = str(result.get("result_url") or "") if task["kind"] == "video" else ""
+        else:
+            command = [sys.executable, str(SKILL_CALLER), "run", "--profile", task["profile"], "--prompt", task["prompt"]]
+            if task["kind"] == "image":
+                command.extend(arg for ref in references if ref["mime"].startswith("image/") for arg in ("--image-file", ref["path"]))
+            else:
+                for ref in references:
+                    if ref["mime"].startswith("image/"):
+                        command.extend(("--image-file", ref["path"]))
+                    elif ref["mime"].startswith("video/"):
+                        command.extend(("--video-file", ref["path"]))
+                    elif ref["mime"].startswith("audio/"):
+                        command.extend(("--audio-file", ref["path"]))
+                output_path = RESULTS_DIR / f"{task_id}.mp4"
+                command.extend(("--ratio", task["ratio"], "--duration", task["duration"], "--resolution", task["resolution"], "--output-file", str(output_path)))
+            completed = subprocess.run(
+                command, cwd=APP_DIR, capture_output=True, text=True, timeout=1950, check=False, env=model_child_env(task["kind"])
+            )
+            result = parse_model_result(completed.stdout)
+            if completed.returncode != 0:
+                raise RuntimeError(result.get("error") or "模型调用失败")
+            image_url = str(result.get("image_url") or "")
+            video_url = str(result.get("video_url") or "")
         local_image_url = ""
         if task["kind"] == "image":
             if not image_url:
@@ -387,7 +481,7 @@ def run_task(task_id: str) -> None:
             task["status"] = "completed"
             task["image_url"] = image_url
             task["local_image_url"] = local_image_url
-            task["video_url"] = str(result.get("video_url") or "")
+            task["video_url"] = video_url
             output_file = result.get("output_file")
             if output_file and Path(output_file).exists():
                 task["local_video_url"] = f"/media/results/{Path(output_file).name}"
@@ -424,13 +518,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            keys = set(configured_env_keys()) | set(os.environ)
-            return self.respond_json({
-                "ok": True,
-                "image_ready": "ARK_API_KEY" in keys,
-                "video_ready": "SEEDANCE_ARK_API_KEY" in keys,
-                "workers": MAX_WORKERS,
-            })
+            return self.respond_json(health_flags())
         if path == "/api/tasks":
             with LOCK:
                 tasks = sorted(TASKS.values(), key=lambda item: item["created_at"], reverse=True)
