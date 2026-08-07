@@ -32,6 +32,7 @@ def task_snapshot(task_id: str, status: str, **changes):
         "duration": "15",
         "resolution": "720p",
         "image_url": "",
+        "local_image_url": "",
         "local_video_url": "/media/results/example.mp4",
         "error": "",
         "queue_position": None,
@@ -69,6 +70,7 @@ class TaskHistoryRecoveryTests(unittest.TestCase):
         restored = self.server.TASKS["task-1"]
         self.assertEqual(restored["status"], "completed")
         self.assertEqual(restored["prompt"], "A complete multi-line prompt\nthat must survive restart.")
+        self.assertEqual(restored["local_image_url"], "")
         self.assertEqual(restored["local_video_url"], "/media/results/example.mp4")
         self.assertEqual(restored["finished_at"], 105.0)
 
@@ -88,6 +90,7 @@ class TaskHistoryRecoveryTests(unittest.TestCase):
         event = json.loads(self.history_path.read_text(encoding="utf-8"))
         self.assertEqual(event["event"], "completed")
         self.assertEqual(event["task"]["prompt"], "A complete multi-line prompt\nthat must survive restart.")
+        self.assertIn("local_image_url", event["task"])
         self.assertEqual(event["task"]["local_video_url"], "/media/results/example.mp4")
 
     def test_public_task_exposes_a_retryable_reference_url_without_disk_path(self):
