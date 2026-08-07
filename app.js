@@ -4,6 +4,60 @@ const prompts = document.querySelector('#prompts');
 const profile = document.querySelector('#profile');
 const gallery = document.querySelector('#gallery');
 const fileInput = document.querySelector('#references');
+const referenceUrls = document.querySelector('#reference-urls');
+
+const MODEL_CATALOG = {
+  'seedream50-pro-ark-direct': { label: 'Seedream 5.0 Pro · 2K', provider: 'ark', kind: 'image', accept: 'image/*', maxImages: 8, ratios: [], resolutions: [], intro: '使用 Seedream 5.0 Pro 生成图片。' },
+  'seedream43-ark-direct': { label: 'Seedream 4.3 · 2K', provider: 'ark', kind: 'image', accept: 'image/*', maxImages: 8, ratios: [], resolutions: [], intro: '使用 Seedream 4.3 生成图片。' },
+  'hfsy-gpt-image-2': { label: 'GPT Image 2 · 1K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 6, ratios: ['1:1','5:4','9:16','16:9','4:3','3:2','4:5','3:4','2:3','21:9'], resolutions: ['1K'], intro: 'HFSY · GPT Image 2，支持最多 6 张参考图。' },
+  'hfsy-gpt-image-2pro': { label: 'GPT Image 2 Pro · 2K / 4K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 4, ratios: ['1:1','5:4','9:16','16:9','4:3','3:2','4:5','3:4','2:3','21:9'], resolutions: ['2K','4K'], intro: 'HFSY · GPT Image 2 Pro，支持原生 2K / 4K。' },
+  'hfsy-nano-banana-2': { label: 'Nano Banana 2 · 1K / 2K / 4K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 7, ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9','9:21','2:1','1:2'], resolutions: ['1K','2K','4K'], intro: 'HFSY · Nano Banana 2，支持多图参考。' },
+  'hfsy-nano-banana-pro': { label: 'Nano Banana 2 Pro · 1K / 2K / 4K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 7, ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9','9:21','2:1','1:2'], resolutions: ['1K','2K','4K'], intro: 'HFSY · Nano Banana Pro，面向高质量商业图片。' },
+  'seedance-reference-video-ark-direct': { label: 'Seedance · Reference Video · 720p', provider: 'ark', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 8, maxVideos: 8, maxAudios: 8, ratios: ['9:16','16:9','1:1'], resolutions: ['720p'], duration: [15,10,5], intro: '使用 Seedance 生成带音频的视频，支持图片、视频、音频参考。' },
+  'hfsy-minimax-h3': { label: 'Minimax H3 · 视频', group: 'HFSY API', provider: 'hfsy', kind: 'video', accept: 'image/*,audio/*', maxImages: 5, maxVideos: 0, maxAudios: 1, promptLimit: 2000, ratios: ['9:16','16:9'], resolutions: ['large','small'], duration: [5,6,7,8,9,10,11,12,13,14,15], intro: 'HFSY · Minimax H3，支持图片＋单条音频参考，不支持视频参考。' }
+};
+
+function selectedModel() { return MODEL_CATALOG[profile.value]; }
+
+function renderModelOptions(kind) {
+  profile.replaceChildren();
+  const groups = new Map();
+  Object.entries(MODEL_CATALOG).filter(([, model]) => model.kind === kind).forEach(([value, model]) => {
+    const groupName = model.group || (model.provider === 'ark' ? 'ARK / 方舟' : model.provider);
+    if (!groups.has(groupName)) { const group = document.createElement('optgroup'); group.label = groupName; groups.set(groupName, group); profile.append(group); }
+    const option = document.createElement('option'); option.value = value; option.textContent = model.label; groups.get(groupName).append(option);
+  });
+}
+
+function setOptions(selector, values, formatter = value => value) {
+  const select = document.querySelector(selector);
+  select.replaceChildren(...values.map(value => { const option = document.createElement('option'); option.value = value; option.textContent = formatter(value); return option; }));
+}
+
+function applySelectedModel() {
+  const model = selectedModel();
+  if (!model) return;
+  document.querySelector('#intro').textContent = model.intro;
+  const showOptions = model.ratios.length > 0;
+  document.querySelector('#generation-options').classList.toggle('hidden', !showOptions);
+  document.querySelector('#duration-field').classList.toggle('hidden', !model.duration);
+  setOptions('#ratio', model.ratios);
+  setOptions('#resolution', model.resolutions, value => value === 'large' ? '高画质' : value === 'small' ? '标准画质' : value);
+  setOptions('#duration', model.duration || [], value => `${value} 秒`);
+  fileInput.accept = model.accept;
+  const isHfsy = model.provider === 'hfsy';
+  document.querySelector('#dropzone').classList.toggle('hidden', isHfsy);
+  document.querySelector('#reference-preview').classList.toggle('hidden', isHfsy);
+  document.querySelector('#reference-urls-field').classList.toggle('hidden', !isHfsy);
+  document.querySelector('#reference-hint').textContent = model.kind === 'video'
+    ? (model.provider === 'hfsy' ? '可选，图片最多 5 张＋音频最多 1 条' : '可选，支持图 / 视频 / 音频')
+    : `可选，参考图最多 ${model.maxImages} 张`;
+  state.files = state.files.filter(file => model.accept.split(',').some(pattern => file.type.startsWith(pattern.replace('/*', '/'))));
+  if (isHfsy) state.files = [];
+  trimFilesToModel(model);
+  renderReferences();
+  updateHealth();
+}
 
 function setKind(kind) {
   state.kind = kind;
@@ -11,18 +65,22 @@ function setKind(kind) {
   const isVideo = kind === 'video';
   document.querySelector('#kind-label').textContent = isVideo ? '/ MOTION' : '/ IMAGE';
   document.querySelector('#title').innerHTML = isVideo ? '把静止瞬间<br /><i>做成镜头。</i>' : '把一个想法<br /><i>做成图像。</i>';
-  document.querySelector('#intro').textContent = isVideo ? '使用 Seedance 生成带音频的视频。支持图片、视频、音频参考素材。' : '使用 Seedream 直接生成。每次提交只生成一个任务。';
   document.querySelector('#prompt-hint').textContent = '整段提示词会作为一次生成提交 · 支持自由换行';
-  document.querySelector('#video-options').classList.toggle('hidden', !isVideo);
-  document.querySelector('#video-options').classList.toggle('video-options', isVideo);
-  document.querySelector('#reference-hint').textContent = isVideo ? '可选，支持图 / 视频 / 音频' : '可选，支持多张图片';
-  fileInput.accept = isVideo ? 'image/*,video/*,audio/*' : 'image/*';
-  profile.innerHTML = isVideo
-    ? '<option value="seedance-reference-video-ark-direct">Seedance · Reference Video · 1080p</option>'
-    : '<option value="seedream50-pro-ark-direct">Seedream 5.0 Pro · 2K</option><option value="seedream43-ark-direct">Seedream 4.3 · 2K</option>';
+  renderModelOptions(kind);
   state.files = [];
+  referenceUrls.value = '';
   fileInput.value = '';
-  renderReferences();
+  applySelectedModel();
+}
+
+function trimFilesToModel(model) {
+  const counts = { image: 0, video: 0, audio: 0 };
+  state.files = state.files.filter(file => {
+    const type = file.type.split('/')[0];
+    const limit = model[`max${type[0].toUpperCase()}${type.slice(1)}s`] ?? 0;
+    counts[type] += 1;
+    return counts[type] <= limit;
+  });
 }
 
 function updateBatchCount() {
@@ -47,11 +105,13 @@ function renderReferences() {
   });
 }
 function updateFiles(incoming) {
-  const allowed = state.kind === 'video' ? /^(image|video|audio)\// : /^image\//;
-  const added = [...incoming].filter(file => allowed.test(file.type));
+  const model = selectedModel();
+  const accepted = model.accept.split(',').map(value => value.replace('/*', '/'));
+  const added = [...incoming].filter(file => accepted.some(prefix => file.type.startsWith(prefix)));
   const signature = file => `${file.name}-${file.size}-${file.lastModified}`;
   const known = new Set(state.files.map(signature));
-  state.files = [...state.files, ...added.filter(file => !known.has(signature(file)))].slice(0, 8);
+  state.files = [...state.files, ...added.filter(file => !known.has(signature(file)))];
+  trimFilesToModel(model);
   fileInput.value = ''; // 允许移除后再次选择同一个文件
   renderReferences();
 }
@@ -66,13 +126,15 @@ async function restoreTaskInput(task) {
   error.textContent = '';
   setKind(task.kind);
   setSelectValue('#profile', task.profile);
+  applySelectedModel();
   setSelectValue('#ratio', task.ratio);
   setSelectValue('#duration', task.duration);
   setSelectValue('#resolution', task.resolution);
   prompts.value = task.prompt;
   updateBatchCount();
 
-  const references = (task.reference_files || []).filter(reference => reference.url);
+  if (task.provider === 'hfsy') referenceUrls.value = (task.reference_files || []).map(reference => reference.url).filter(Boolean).join('\n');
+  const references = task.provider === 'hfsy' ? [] : (task.reference_files || []).filter(reference => reference.url);
   const restored = await Promise.allSettled(references.map(async reference => {
     const response = await fetch(reference.url);
     if (!response.ok) throw new Error(reference.name || '参考素材');
@@ -111,7 +173,8 @@ function taskCard(task) {
   } else if (task.status === 'failed') {
     frame.querySelector('.placeholder').textContent = '!';
   }
-  fragment.querySelector('.task-kind').textContent = task.kind === 'video' ? 'SEEDANCE' : 'SEEDREAM';
+  const taskModel = MODEL_CATALOG[task.profile];
+  fragment.querySelector('.task-kind').textContent = taskModel ? taskModel.label : (task.kind === 'video' ? 'VIDEO' : 'IMAGE');
   fragment.querySelector('.task-status').textContent = describeStatus(task);
   fragment.querySelector('.task-prompt').textContent = task.prompt;
   const promptDetails = fragment.querySelector('.task-prompt-details');
@@ -168,17 +231,21 @@ async function updateHealth() {
   }
   try {
     const data = await (await fetch('/api/health')).json();
-    const ready = state.kind === 'video' ? data.video_ready : data.image_ready;
+    const model = selectedModel();
+    const ready = model.provider === 'hfsy' ? data.hfsy_ready : (state.kind === 'video' ? data.video_ready : data.image_ready);
     chip.className = `system-status ${ready ? 'ready' : 'error'}`;
     text.textContent = ready
-      ? `${state.kind === 'video' ? 'Seedance 视频' : 'Seedream 图片'}凭证已就绪 · ${data.workers} 个并发制作位`
-      : state.kind === 'video' ? '未找到 SEEDANCE_ARK_API_KEY 配置' : '未找到 ARK_API_KEY 配置';
+      ? `${model.provider === 'hfsy' ? 'HFSY' : 'ARK'} 凭证已就绪 · ${data.workers} 个并发制作位`
+      : model.provider === 'hfsy' ? '未找到 HFSY_API_KEY 配置' : (state.kind === 'video' ? '未找到 SEEDANCE_ARK_API_KEY 配置' : '未找到 ARK_API_KEY 配置');
   } catch { chip.className = 'system-status error'; text.textContent = '本地服务不可用'; }
 }
 form.addEventListener('submit', async event => {
   event.preventDefault(); const prompt = prompts.value.trim(); const error = document.querySelector('#form-error');
   if (window.location.protocol === 'file:') { error.textContent = '当前是文件预览页，无法调用模型。请双击 Start Model Studio.command。'; return; }
   if (!prompt) { error.textContent = '先写下一条你想制作的提示词。'; return; }
+  const model = selectedModel();
+  if (model.provider === 'hfsy' && state.files.length) { error.textContent = 'HFSY 参考素材请填写公网 URL，不支持直接上传本地文件。'; return; }
+  if (model.promptLimit && prompt.length > model.promptLimit) { error.textContent = `当前模型提示词不能超过 ${model.promptLimit} 字。`; return; }
   error.textContent = '';
   const submit = document.querySelector('#submit-button'); submit.disabled = true;
   const payload = new FormData(form); payload.set('kind', state.kind); payload.set('prompts', prompt); payload.delete('references'); state.files.forEach(file => payload.append('references', file));
@@ -190,6 +257,7 @@ form.addEventListener('submit', async event => {
   finally { submit.disabled = false; }
 });
 document.querySelectorAll('.mode').forEach(button => button.addEventListener('click', () => { setKind(button.dataset.kind); updateHealth(); }));
+profile.addEventListener('change', applySelectedModel);
 prompts.addEventListener('input', updateBatchCount);
 fileInput.addEventListener('change', event => updateFiles(event.target.files));
 document.addEventListener('paste', event => {
@@ -212,4 +280,4 @@ function showImagePreview(url, prompt) {
 }
 previewDialog.querySelector('[data-close-preview]').addEventListener('click', () => previewDialog.close());
 previewDialog.addEventListener('click', event => { if (event.target === previewDialog) previewDialog.close(); });
-updateBatchCount(); updateHealth(); loadTasks(); state.timer = setInterval(() => { updateHealth(); loadTasks(); }, 3500);
+setKind('image'); updateBatchCount(); loadTasks(); state.timer = setInterval(() => { updateHealth(); loadTasks(); }, 3500);
