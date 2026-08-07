@@ -192,7 +192,12 @@ def generate(
         initial_response = request_json(endpoint, payload, api_key)
     except RuntimeError as exc:
         message = str(exc).lower()
-        transient = "http 504" in message or "failed to load filedata" in message or "context deadline exceeded" in message
+        transient = (
+            "http 502" in message
+            or "http 504" in message
+            or "failed to load filedata" in message
+            or "context deadline exceeded" in message
+        )
         if not transient:
             raise
         sleep(1)
