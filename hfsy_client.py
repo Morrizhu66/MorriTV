@@ -134,13 +134,20 @@ def _first_nano_url(payload: dict[str, Any]) -> str:
 
 def parse_generation_response(payload: dict[str, Any]) -> dict[str, str]:
     data = payload.get("data") or []
-    data_url = str(data[0].get("url") or "") if data and isinstance(data[0], dict) else ""
+    nested = data if isinstance(data, dict) else {}
+    first_item = data[0] if isinstance(data, list) and data and isinstance(data[0], dict) else {}
+    data_url = str(first_item.get("url") or nested.get("result_url") or nested.get("video_url") or nested.get("url") or "")
     result_url = str(
         payload.get("result_url") or payload.get("video_url") or payload.get("url") or data_url or _first_nano_url(payload)
     )
-    task_id = str(payload.get("task_id") or payload.get("id") or "")
-    status = str(payload.get("status") or ("SUCCESS" if result_url else "IN_PROGRESS" if task_id else "FAILURE")).upper()
-    error = str(payload.get("fail_reason") or (payload.get("error") or {}).get("message") or payload.get("message") or "")
+    task_id = str(payload.get("task_id") or payload.get("id") or nested.get("task_id") or nested.get("id") or "")
+    status = str(payload.get("status") or nested.get("status") or ("SUCCESS" if result_url else "IN_PROGRESS" if task_id else "FAILURE")).upper()
+    if status in {"SUCCESS", "SUCCEEDED", "COMPLETED", "DONE"} or (result_url and status not in {"FAILURE", "FAILED", "ERROR", "CANCELLED", "CANCELED"}):
+        status = "SUCCESS"
+    elif status in {"FAILURE", "FAILED", "ERROR", "CANCELLED", "CANCELED"}:
+        status = "FAILURE"
+    error_value = payload.get("error") or nested.get("error") or {}
+    error = str(payload.get("fail_reason") or nested.get("fail_reason") or (error_value.get("message") if isinstance(error_value, dict) else error_value) or payload.get("message") or nested.get("message") or "")
     return {"status": status, "task_id": task_id, "result_url": result_url, "error": error}
 
 

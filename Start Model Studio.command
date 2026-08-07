@@ -2,12 +2,9 @@
 set -e
 cd "$(dirname "$0")"
 
-if [[ ! -x .venv/bin/python3 ]]; then
-  python3 -m venv .venv
-fi
-if ! .venv/bin/python3 -c 'import tos' >/dev/null 2>&1; then
+if ! PYTHONPATH=.deps python3 -c 'import tos' >/dev/null 2>&1; then
   echo "首次启动：正在安装 TOS 依赖……"
-  .venv/bin/python3 -m pip install -r requirements.txt
+  python3 -m pip install --target .deps -r requirements.txt
 fi
 
 # Restart a previous Model Studio instance so code updates take effect.
@@ -23,7 +20,7 @@ elif curl -fsS --max-time 1 http://127.0.0.1:4178/api/health >/dev/null 2>&1; th
   exit 1
 fi
 
-nohup .venv/bin/python3 server.py >> model-studio.log 2>&1 < /dev/null &
+PYTHONPATH=.deps nohup python3 server.py >> model-studio.log 2>&1 < /dev/null &
 server_pid=$!
 
 for _ in {1..20}; do

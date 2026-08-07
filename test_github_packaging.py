@@ -46,14 +46,16 @@ class GithubPackagingTests(unittest.TestCase):
         self.assertTrue(server.SKILL_CALLER.is_relative_to(ROOT))
         self.assertTrue(server.SKILL_CALLER.is_file())
 
-    def test_launcher_bootstraps_the_tos_sdk_in_an_ignored_virtualenv(self):
+    def test_launcher_keeps_the_existing_runtime_and_isolates_the_tos_sdk(self):
         launcher = (ROOT / "Start Model Studio.command").read_text(encoding="utf-8")
         requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
         gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
-        self.assertIn("pip install -r requirements.txt", launcher)
-        self.assertIn(".venv/bin/python3 server.py", launcher)
+        self.assertIn("--target .deps", launcher)
+        self.assertIn("PYTHONPATH=.deps", launcher)
+        self.assertIn("python3 server.py", launcher)
+        self.assertNotIn(".venv/bin/python3 server.py", launcher)
         self.assertIn("tos", requirements)
-        self.assertIn(".venv/", gitignore)
+        self.assertIn(".deps/", gitignore)
 
 
 if __name__ == "__main__":

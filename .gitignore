@@ -20,5 +20,5 @@ __pycache__/
 .DS_Store
 .codegraph/
 .venv/
+.deps/
 venv/
-

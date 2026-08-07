@@ -109,6 +109,16 @@ class HfsyClientContractTests(unittest.TestCase):
             {"status": "IN_PROGRESS", "task_id": "video-1", "result_url": "", "error": ""},
         )
         self.assertEqual(
+            parse_generation_response({"data": {"task_id": "video-nested", "status": "QUEUED"}}),
+            {"status": "QUEUED", "task_id": "video-nested", "result_url": "", "error": ""},
+        )
+        self.assertEqual(
+            parse_generation_response({
+                "data": {"task_id": "video-done", "status": "COMPLETED", "result_url": "https://cdn.example/video.mp4"}
+            }),
+            {"status": "SUCCESS", "task_id": "video-done", "result_url": "https://cdn.example/video.mp4", "error": ""},
+        )
+        self.assertEqual(
             parse_generation_response({"id": "video-2", "status": "FAILURE", "fail_reason": "blocked"}),
             {"status": "FAILURE", "task_id": "video-2", "result_url": "", "error": "blocked"},
         )
