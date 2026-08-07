@@ -150,9 +150,20 @@ async function restoreTaskInput(task) {
 function describeStatus(task) {
   return { queued: '等待中', running: '制作中', completed: '已完成', failed: '失败' }[task.status] || task.status;
 }
+function updateQueueOverview(tasks) {
+  const counts = tasks.reduce((result, task) => {
+    result[task.status] = (result[task.status] || 0) + 1;
+    return result;
+  }, {});
+  document.querySelector('#count-total').textContent = tasks.length;
+  document.querySelector('#count-active').textContent = (counts.queued || 0) + (counts.running || 0);
+  document.querySelector('#count-completed').textContent = counts.completed || 0;
+  document.querySelector('#count-failed').textContent = counts.failed || 0;
+}
 function taskCard(task) {
   const fragment = document.querySelector('#task-template').content.cloneNode(true);
   const card = fragment.querySelector('.task-card'); card.classList.add(task.status);
+  card.setAttribute('aria-label', `${describeStatus(task)}：${task.prompt}`);
   const frame = fragment.querySelector('.media-frame');
   if (task.status === 'completed' && task.kind === 'image' && (task.local_image_url || task.image_url)) {
     const imageUrl = task.local_image_url || task.image_url;
@@ -160,32 +171,38 @@ function taskCard(task) {
     openPreview.type = 'button'; openPreview.className = 'image-preview-trigger'; openPreview.title = '点击放大预览';
     const image = document.createElement('img'); image.src = imageUrl; image.alt = task.prompt; image.loading = 'lazy';
     openPreview.append(image); openPreview.addEventListener('click', () => showImagePreview(imageUrl, task.prompt));
-    frame.replaceChildren(openPreview);
+    frame.querySelector('.placeholder').replaceWith(openPreview);
   } else if (task.status === 'completed' && task.kind === 'video' && (task.local_video_url || task.video_url)) {
-    const video = document.createElement('video'); video.src = task.local_video_url || task.video_url; video.controls = true; video.preload = 'metadata'; frame.replaceChildren(video);
+    const video = document.createElement('video'); video.src = task.local_video_url || task.video_url; video.controls = true; video.preload = 'metadata'; frame.querySelector('.placeholder').replaceWith(video);
   } else if (task.status === 'failed') {
-    frame.querySelector('.placeholder').textContent = '!';
+    frame.querySelector('.placeholder-mark').textContent = '!';
   }
+  frame.querySelector('.placeholder-label')?.replaceChildren(document.createTextNode({
+    queued: '等待制作位', running: '正在制作', completed: '成片已就绪', failed: '制作未完成'
+  }[task.status] || '任务处理中'));
   const taskModel = MODEL_CATALOG[task.profile];
-  fragment.querySelector('.task-kind').textContent = taskModel ? taskModel.label : (task.kind === 'video' ? 'VIDEO' : 'IMAGE');
+  const modelLabel = taskModel ? taskModel.label : (task.kind === 'video' ? 'VIDEO' : 'IMAGE');
+  fragment.querySelector('.task-kind').textContent = modelLabel;
+  fragment.querySelector('.task-kind').title = modelLabel;
   fragment.querySelector('.task-status').textContent = describeStatus(task);
   fragment.querySelector('.task-prompt').textContent = task.prompt;
   const promptDetails = fragment.querySelector('.task-prompt-details');
-  if (task.kind === 'video') {
-    promptDetails.hidden = false;
-    promptDetails.querySelector('.task-prompt-full').textContent = task.prompt;
-  }
+  promptDetails.querySelector('.task-prompt-full').textContent = task.prompt;
   const actions = fragment.querySelector('.card-actions');
-  if (task.status === 'completed' && task.kind === 'image' && (task.local_image_url || task.image_url)) actions.append(link('下载图片 ↓', task.local_image_url || task.image_url));
-  if (task.status === 'completed' && task.kind === 'video' && (task.local_video_url || task.video_url)) actions.append(link('下载视频 ↓', task.local_video_url || task.video_url));
+  if (task.status === 'completed' && task.kind === 'image' && (task.local_image_url || task.image_url)) actions.append(link('下载成片 ↘', task.local_image_url || task.image_url));
+  if (task.status === 'completed' && task.kind === 'video' && (task.local_video_url || task.video_url)) actions.append(link('下载成片 ↘', task.local_video_url || task.video_url));
   const retry = document.createElement('button');
-  retry.type = 'button'; retry.textContent = '带回输入重试 ↶'; retry.title = '带回模型、提示词和参考素材，不会直接提交生成';
+  retry.type = 'button'; retry.className = 'retry-action'; retry.textContent = '再次制作 ↶'; retry.title = '带回模型、提示词和参考素材，不会直接提交生成';
   retry.addEventListener('click', () => restoreTaskInput(task));
   actions.append(retry);
-  if (task.status === 'failed' && task.error) { const error = document.createElement('div'); error.className = 'error-detail'; error.textContent = task.error; actions.append(error); }
+  if (task.status === 'failed' && task.error) {
+    const errorDetails = fragment.querySelector('.task-error-details');
+    errorDetails.hidden = false;
+    errorDetails.querySelector('.error-detail').textContent = task.error;
+  }
   return fragment.querySelector('.task-card');
 }
-function link(label, href) { const a = document.createElement('a'); a.href = href; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = label; return a; }
+function link(label, href) { const a = document.createElement('a'); a.className = 'download-action'; a.href = href; a.target = '_blank'; a.rel = 'noreferrer'; a.textContent = label; return a; }
 function taskSignature(task) {
   return [task.status, task.prompt, task.image_url, task.local_image_url, task.video_url, task.local_video_url, task.error].join('|');
 }
@@ -193,13 +210,14 @@ async function loadTasks() {
   try {
     const response = await fetch('/api/tasks'); const payload = await response.json();
     const tasks = payload.tasks.filter(task => task.status !== 'failed' || task.history_version >= 2);
+    updateQueueOverview(tasks);
     if (!tasks.length) {
       if (!gallery.querySelector('.empty')) gallery.innerHTML = '<div class="empty"><span>◌</span><p>还没有任务</p><small>从左侧输入提示词，第一张成片会出现在这里。</small></div>';
       return;
     }
     gallery.querySelector('.empty')?.remove();
     const current = new Map([...gallery.querySelectorAll('[data-task-id]')].map(card => [card.dataset.taskId, card]));
-    tasks.forEach(task => {
+    tasks.forEach((task, index) => {
       const signature = taskSignature(task);
       let card = current.get(task.id);
       if (!card || card.dataset.signature !== signature) {
@@ -209,8 +227,9 @@ async function loadTasks() {
         card ? card.replaceWith(nextCard) : gallery.append(nextCard);
         card = nextCard;
       }
-      // Moving the existing card preserves loaded media through polling.
-      gallery.append(card);
+      // Keep stable cards mounted so polling does not repaint loaded media.
+      const slot = gallery.children[index];
+      if (slot !== card) gallery.insertBefore(card, slot || null);
       current.delete(task.id);
     });
     current.forEach(card => card.remove());
