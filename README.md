@@ -21,7 +21,7 @@
 
 HFSY 模型使用 `HFSY_API_KEY`，可在 [HFSY API](https://www.hfsyapi.cn) 申请，接口说明见[HFSY 文档](https://www.hfsyapi.cn/docs)。HFSY 与 Ark 是完全独立的调用链路，未配置某一侧的 Key 不影响另一侧。
 
-HFSY 只接收公网 URL，所以本地参考素材会先自动上传到你的私有火山引擎 TOS Bucket，再生成短时 GET 签名 URL 交给 HFSY。任务结束后服务会主动删除临时对象；也可在页面直接填公网 URL，此时不需要 TOS。
+HFSY 只接收公网 URL，所以页面中选择的本地参考素材会先自动上传到你的私有火山引擎 TOS Bucket，再生成短时 GET 签名 URL 交给 HFSY。任务结束后服务会主动删除临时对象。后端仍保留 `reference_urls` 字段供 API 兼容调用。
 
 ## 2. 配置
 

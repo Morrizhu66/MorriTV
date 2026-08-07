@@ -1,4 +1,3 @@
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -71,7 +70,7 @@ class HfsyServerIntegrationTests(unittest.TestCase):
         self.assertEqual(task["local_image_url"], "/media/results/hfsy-task.png")
 
     def test_health_flags_report_hfsy_readiness_without_returning_secret(self):
-        with patch.dict(os.environ, {"HFSY_API_KEY": "do-not-leak"}, clear=True):
+        with patch.object(server, "private_env_value", side_effect=lambda key: "do-not-leak" if key == "HFSY_API_KEY" else ""):
             health = server.health_flags()
 
         self.assertTrue(health["hfsy_ready"])

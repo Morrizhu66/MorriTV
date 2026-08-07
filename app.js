@@ -4,7 +4,6 @@ const prompts = document.querySelector('#prompts');
 const profile = document.querySelector('#profile');
 const gallery = document.querySelector('#gallery');
 const fileInput = document.querySelector('#references');
-const referenceUrls = document.querySelector('#reference-urls');
 
 const MODEL_CATALOG = {
   'seedream50-pro-ark-direct': { label: 'Seedream 5.0 Pro · 2K', provider: 'ark', kind: 'image', accept: 'image/*', maxImages: 8, ratios: [], resolutions: [], intro: '使用 Seedream 5.0 Pro 生成图片。' },
@@ -45,10 +44,8 @@ function applySelectedModel() {
   setOptions('#resolution', model.resolutions, value => value === 'large' ? '高画质' : value === 'small' ? '标准画质' : value);
   setOptions('#duration', model.duration || [], value => `${value} 秒`);
   fileInput.accept = model.accept;
-  const isHfsy = model.provider === 'hfsy';
   document.querySelector('#dropzone').classList.remove('hidden');
   document.querySelector('#reference-preview').classList.remove('hidden');
-  document.querySelector('#reference-urls-field').classList.toggle('hidden', !isHfsy);
   document.querySelector('#reference-hint').textContent = model.kind === 'video'
     ? (model.provider === 'hfsy' ? '可选，图片最多 5 张＋音频最多 1 条' : '可选，支持图 / 视频 / 音频')
     : `可选，参考图最多 ${model.maxImages} 张`;
@@ -67,7 +64,6 @@ function setKind(kind) {
   document.querySelector('#prompt-hint').textContent = '整段提示词会作为一次生成提交 · 支持自由换行';
   renderModelOptions(kind);
   state.files = [];
-  referenceUrls.value = '';
   fileInput.value = '';
   applySelectedModel();
 }
@@ -132,8 +128,7 @@ async function restoreTaskInput(task) {
   prompts.value = task.prompt;
   updateBatchCount();
 
-  if (task.provider === 'hfsy') referenceUrls.value = (task.reference_files || []).map(reference => reference.url).filter(Boolean).join('\n');
-  const references = task.provider === 'hfsy' ? [] : (task.reference_files || []).filter(reference => reference.url);
+  const references = (task.reference_files || []).filter(reference => reference.url);
   const restored = await Promise.allSettled(references.map(async reference => {
     const response = await fetch(reference.url);
     if (!response.ok) throw new Error(reference.name || '参考素材');
@@ -236,7 +231,7 @@ async function updateHealth() {
     text.textContent = ready
       ? `${model.provider === 'hfsy' ? 'HFSY' : 'ARK'} 凭证已就绪 · ${data.workers} 个并发制作位`
       : model.provider === 'hfsy' ? '未找到 HFSY_API_KEY 配置' : (state.kind === 'video' ? '未找到 SEEDANCE_ARK_API_KEY 配置' : '未找到 ARK_API_KEY 配置');
-    if (model.provider === 'hfsy' && !data.tos_ready) document.querySelector('#reference-hint').textContent = '未配置 TOS，可改填公网 URL';
+    if (model.provider === 'hfsy' && !data.tos_ready) document.querySelector('#reference-hint').textContent = '未配置 TOS，无法上传本地素材';
   } catch { chip.className = 'system-status error'; text.textContent = '本地服务不可用'; }
 }
 form.addEventListener('submit', async event => {

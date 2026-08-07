@@ -44,10 +44,15 @@ class HfsyFrontendContractTests(unittest.TestCase):
         self.assertIn('id="generation-options"', self.html)
         self.assertIn('id="duration-field"', self.html)
         self.assertIn('id="resolution"', self.html)
-        self.assertIn('id="reference-urls-field"', self.html)
-        self.assertIn('id="reference-urls"', self.html)
+        self.assertNotIn('id="reference-urls-field"', self.html)
+        self.assertNotIn('id="reference-urls"', self.html)
         self.assertIn("data.tos_ready", self.js)
-        self.assertIn("未配置 TOS，可改填公网 URL", self.js)
+        self.assertIn("未配置 TOS，无法上传本地素材", self.js)
+
+    def test_hfsy_uses_local_reference_picker_without_url_form_logic(self):
+        self.assertNotIn("const referenceUrls", self.js)
+        self.assertNotIn("reference_urls", self.js)
+        self.assertIn("document.querySelector('#dropzone').classList.remove('hidden')", self.js)
 
 
 if __name__ == "__main__":
