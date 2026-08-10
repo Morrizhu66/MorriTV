@@ -15,29 +15,46 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
+from urllib.request import urlopen
+
+import hfsy_client
+from inspiration_library import InspirationLibrary
+from media_library import MediaLibrary
+import tos_uploader
 
 APP_DIR = Path(__file__).resolve().parent
 SKILL_CALLER = APP_DIR / "tools" / "call_business_model.py"
 PRIVATE_ENV = APP_DIR / ".env"
 UPLOADS_DIR = APP_DIR / "uploads"
 RESULTS_DIR = APP_DIR / "results"
+COLLECTIONS_DIR = APP_DIR / "collections"
 HISTORY_FILE = APP_DIR / "task-history.jsonl"
+LIBRARY_FILE = APP_DIR / "media-library.json"
+TRASH_DIR = APP_DIR / "trash"
+INSPIRATIONS_DIR = APP_DIR / "inspirations"
+INSPIRATION_FILE = APP_DIR / "inspiration-library.json"
 HOST = "127.0.0.1"
 PORT = int(os.getenv("MODEL_STUDIO_PORT", "4178"))
-MAX_WORKERS = 2
+IMAGE_MAX_WORKERS = 8
+VIDEO_MAX_WORKERS = 4
 
-for folder in (UPLOADS_DIR, RESULTS_DIR):
+for folder in (UPLOADS_DIR, RESULTS_DIR, COLLECTIONS_DIR, TRASH_DIR, INSPIRATIONS_DIR):
     folder.mkdir(parents=True, exist_ok=True)
 
+MEDIA_LIBRARY = MediaLibrary(LIBRARY_FILE, RESULTS_DIR, COLLECTIONS_DIR)
+INSPIRATION_LIBRARY = InspirationLibrary(INSPIRATION_FILE, INSPIRATIONS_DIR, RESULTS_DIR, UPLOADS_DIR, COLLECTIONS_DIR)
 TASKS: dict[str, dict[str, Any]] = {}
 LOCK = threading.RLock()
-EXECUTOR = ThreadPoolExecutor(max_workers=MAX_WORKERS, thread_name_prefix="model-studio")
+IMAGE_EXECUTOR = ThreadPoolExecutor(max_workers=IMAGE_MAX_WORKERS, thread_name_prefix="model-studio-image")
+VIDEO_EXECUTOR = ThreadPoolExecutor(max_workers=VIDEO_MAX_WORKERS, thread_name_prefix="model-studio-video")
+EXECUTORS = {"image": IMAGE_EXECUTOR, "video": VIDEO_EXECUTOR}
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 ARK_HOST = "ark-cn-beijing.bytedance.net"
 PROXY_ENV_KEYS = (
@@ -80,6 +97,19 @@ def private_env_value(name: str) -> str:
     return ""
 
 
+def health_flags() -> dict[str, Any]:
+    keys = set(configured_env_keys()) | set(os.environ)
+    tos_status = tos_uploader.config_status(private_env_value)
+    return {
+        "ok": True,
+        "image_ready": "ARK_API_KEY" in keys,
+        "video_ready": "SEEDANCE_ARK_API_KEY" in keys,
+        "hfsy_ready": "HFSY_API_KEY" in keys,
+        "tos_ready": tos_status["ready"],
+        "workers": {"image": IMAGE_MAX_WORKERS, "video": VIDEO_MAX_WORKERS},
+    }
+
+
 def model_child_env(kind: str) -> dict[str, str]:
     """Build a direct Ark environment so local/system proxies cannot stall model calls."""
     child_env = os.environ.copy()
@@ -107,10 +137,17 @@ def now() -> float:
     return round(time.time(), 3)
 
 
+HISTORY_VERSION = 3
+DAILY_TARGETS = {
+    "seedance-reference-video-ark-direct": 20,
+    "seedream50-pro-ark-direct": 30,
+}
+
+
 PERSISTED_TASK_FIELDS = (
-    "id", "kind", "profile", "prompt", "status", "created_at", "started_at",
+    "id", "kind", "provider", "profile", "prompt", "status", "created_at", "started_at",
     "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
-    "local_video_url", "error", "queue_position",
+    "local_image_url", "local_video_url", "error", "queue_position", "folder_id", "history_version",
 )
 
 
@@ -122,6 +159,7 @@ def history_task_snapshot(task: dict[str, Any]) -> dict[str, Any]:
             "name": str(reference.get("name") or "reference"),
             "path": str(reference.get("path") or ""),
             "mime": str(reference.get("mime") or "application/octet-stream"),
+            "url": str(reference.get("url") or ""),
         }
         for reference in task.get("reference_files") or []
         if isinstance(reference, dict)
@@ -139,6 +177,7 @@ def restore_history_task(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     task = {
         "id": task_id,
         "kind": kind,
+        "provider": str(snapshot.get("provider") or ("hfsy" if hfsy_client.is_hfsy_profile(str(snapshot.get("profile") or "")) else "ark")),
         "profile": str(snapshot.get("profile") or ""),
         "prompt": prompt,
         "status": str(snapshot.get("status") or "failed"),
@@ -150,10 +189,13 @@ def restore_history_task(snapshot: dict[str, Any]) -> dict[str, Any] | None:
         "duration": str(snapshot.get("duration") or "15"),
         "resolution": str(snapshot.get("resolution") or "720p"),
         "image_url": str(snapshot.get("image_url") or ""),
+        "local_image_url": str(snapshot.get("local_image_url") or ""),
         "video_url": "",
         "local_video_url": str(snapshot.get("local_video_url") or ""),
         "error": str(snapshot.get("error") or ""),
         "queue_position": snapshot.get("queue_position"),
+        "folder_id": str(snapshot.get("folder_id") or ""),
+        "history_version": int(snapshot.get("history_version") or 1),
     }
     return task
 
@@ -170,6 +212,10 @@ def load_task_history() -> None:
             continue
         snapshot = entry.get("task")
         if not isinstance(snapshot, dict):
+            continue
+        if entry.get("event") == "deleted":
+            deleted_id = str(entry.get("task_id") or snapshot.get("id") or "")
+            latest_snapshots.pop(deleted_id, None)
             continue
         task = restore_history_task(snapshot)
         if task:
@@ -188,6 +234,9 @@ def load_task_history() -> None:
             TASKS[task["id"]] = task
         for task in interrupted:
             record_task_event("interrupted", task)
+    for task in latest_snapshots.values():
+        if task.get("status") == "completed":
+            register_completed_task(task)
 
 
 def record_task_event(event: str, task: dict[str, Any]) -> None:
@@ -207,18 +256,191 @@ def record_task_event(event: str, task: dict[str, Any]) -> None:
         history.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
+def daily_usage(reference_time: float | None = None) -> dict[str, Any]:
+    """Count today's unique queued submissions. Targets are reminders, never limits."""
+    reference = time.time() if reference_time is None else reference_time
+    local_date = datetime.fromtimestamp(reference).date()
+    counts: dict[str, int] = {}
+    seen: set[str] = set()
+    if HISTORY_FILE.exists():
+        for raw in HISTORY_FILE.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(raw)
+                snapshot = entry.get("task") or {}
+                task_id = str(entry.get("task_id") or snapshot.get("id") or "")
+                created_at = float(snapshot.get("created_at"))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if entry.get("event") != "queued" or not task_id or task_id in seen:
+                continue
+            seen.add(task_id)
+            if datetime.fromtimestamp(created_at).date() != local_date:
+                continue
+            profile = str(snapshot.get("profile") or entry.get("profile") or "unknown")
+            counts[profile] = counts.get(profile, 0) + 1
+    return {
+        "date": local_date.isoformat(), "counts": counts,
+        "targets": dict(DAILY_TARGETS), "total": sum(counts.values()), "enforced": False,
+    }
+
+
+def _new_trash_root(kind: str, item_id: str) -> Path:
+    base = TRASH_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}-{kind}-{SAFE_NAME.sub('-', item_id)}"
+    target = base if not base.exists() else base.with_name(f"{base.name}-{uuid.uuid4().hex[:6]}")
+    target.mkdir(parents=True)
+    return target
+
+
+def _trash_references(task: dict[str, Any], trash_root: Path) -> list[str]:
+    moved: list[str] = []
+    for reference in task.get("reference_files") or []:
+        path = Path(str(reference.get("path") or ""))
+        if not path.is_file():
+            continue
+        resolved = path.resolve()
+        if not any(resolved.is_relative_to(root.resolve()) for root in (UPLOADS_DIR, COLLECTIONS_DIR)):
+            continue
+        destination = trash_root / "references"
+        destination.mkdir(parents=True, exist_ok=True)
+        target = MediaLibrary._available_target(destination, str(reference.get("name") or path.name))
+        path.replace(target)
+        moved.append(str(target))
+    return moved
+
+
+def delete_task(task_id: str) -> dict[str, Any]:
+    with LOCK:
+        task = TASKS.get(task_id)
+        if not task:
+            raise ValueError("任务不存在")
+        if task.get("status") in {"queued", "running"}:
+            raise ValueError("任务仍在制作中，完成后再删除")
+        snapshot = dict(task)
+    trash_root = _new_trash_root("task", task_id)
+    asset = MEDIA_LIBRARY.asset_for_task(task_id)
+    trashed_asset = MEDIA_LIBRARY.trash_asset(asset["id"], trash_root) if asset else None
+    references = _trash_references(snapshot, trash_root)
+    metadata = {"deleted_at": now(), "task": history_task_snapshot(snapshot), "asset": trashed_asset, "references": references}
+    (trash_root / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    with LOCK:
+        record_task_event("deleted", snapshot)
+        TASKS.pop(task_id, None)
+    return {"task": public_task(snapshot), "trash_path": str(trash_root)}
+
+
+def delete_library_asset(asset_id: str) -> dict[str, Any]:
+    asset = next((item for item in MEDIA_LIBRARY.snapshot()["assets"] if item.get("id") == asset_id), None)
+    if not asset:
+        raise ValueError("素材不存在")
+    if asset.get("task_id"):
+        deleted = delete_task(str(asset["task_id"]))
+        return {"asset": asset, **deleted}
+    trash_root = _new_trash_root("asset", asset_id)
+    deleted = MEDIA_LIBRARY.trash_asset(asset_id, trash_root)
+    (trash_root / "metadata.json").write_text(json.dumps({"deleted_at": now(), **deleted}, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"asset": deleted["asset"], "trash_path": str(trash_root)}
+
+
+def register_completed_task(task: dict[str, Any]) -> dict[str, Any] | None:
+    """Add a locally completed generation to the reusable library without duplicating it."""
+    try:
+        return MEDIA_LIBRARY.register_generated(task)
+    except Exception as exc:
+        print(f"[{time.strftime('%H:%M:%S')}] library registration failed for {task.get('id', 'unknown')}: {exc}")
+        return None
+
+
+def move_library_asset(asset_id: str, folder_id: str) -> dict[str, Any]:
+    """Move the real file and keep its task's local result URL usable."""
+    asset = MEDIA_LIBRARY.move_asset(asset_id, folder_id)
+    task_id = str(asset.get("task_id") or "")
+    if task_id:
+        with LOCK:
+            task = TASKS.get(task_id)
+            if task:
+                task["folder_id"] = folder_id
+                field = "local_video_url" if asset.get("kind") == "video" else "local_image_url"
+                task[field] = str(asset.get("url") or "")
+                record_task_event("moved", task)
+    return asset
+
+
+def migrate_collection_uploads(folder_id: str) -> dict[str, str]:
+    """Move saved references from a deleted collection back to default uploads."""
+    source_root = COLLECTIONS_DIR / folder_id / "uploads"
+    if not source_root.exists():
+        return {}
+    path_map: dict[str, str] = {}
+    for source in sorted((path for path in source_root.rglob("*") if path.is_file())):
+        relative = source.relative_to(source_root)
+        target = UPLOADS_DIR / relative
+        if target.exists():
+            target = target.with_name(f"{target.stem}-{folder_id[:6]}{target.suffix}")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        old_path = str(source)
+        source.replace(target)
+        path_map[old_path] = str(target)
+    for directory in sorted((path for path in source_root.rglob("*") if path.is_dir()), key=lambda path: len(path.parts), reverse=True):
+        try:
+            directory.rmdir()
+        except OSError:
+            pass
+    try:
+        source_root.rmdir()
+    except OSError:
+        pass
+    return path_map
+
+
+def delete_collection_folder(folder_id: str) -> dict[str, Any]:
+    """Delete one workspace without deleting its results or saved references."""
+    with LOCK:
+        active = [task for task in TASKS.values() if task.get("folder_id") == folder_id and task.get("status") in {"queued", "running"}]
+        if active:
+            raise ValueError("收藏夹中仍有任务正在制作，请完成后再删除")
+    deleted = MEDIA_LIBRARY.delete_folder(folder_id)
+    reference_moves = migrate_collection_uploads(folder_id)
+    result_moves = {move.get("old_url", ""): move.get("new_url", "") for move in deleted.get("moves", [])}
+    with LOCK:
+        for task in TASKS.values():
+            if task.get("folder_id") != folder_id:
+                continue
+            task["folder_id"] = ""
+            for reference in task.get("reference_files") or []:
+                old_path = str(reference.get("path") or "")
+                if old_path in reference_moves:
+                    reference["path"] = reference_moves[old_path]
+            if task.get("local_image_url") in result_moves:
+                task["local_image_url"] = result_moves[task["local_image_url"]]
+            if task.get("local_video_url") in result_moves:
+                task["local_video_url"] = result_moves[task["local_video_url"]]
+            record_task_event("folder_deleted", task)
+    workspace = COLLECTIONS_DIR / folder_id
+    try:
+        workspace.rmdir()
+    except OSError:
+        pass
+    return deleted
+
+
 def public_reference(reference: dict[str, Any]) -> dict[str, str]:
     """Expose a local media URL for retry, never the absolute upload path."""
     public = {
         "name": str(reference.get("name") or "reference"),
         "mime": str(reference.get("mime") or "application/octet-stream"),
-        "url": "",
+        "url": str(reference.get("url") or ""),
     }
     try:
         relative = Path(str(reference.get("path") or "")).resolve().relative_to(UPLOADS_DIR.resolve())
         public["url"] = f"/media/uploads/{quote(relative.as_posix(), safe='/')}"
     except (ValueError, OSError):
-        pass
+        try:
+            relative = Path(str(reference.get("path") or "")).resolve().relative_to(COLLECTIONS_DIR.resolve())
+            parts = relative.parts
+            if len(parts) >= 4 and parts[1] == "uploads":
+                public["url"] = f"/media/collections/{quote(parts[0], safe='')}/uploads/{quote(Path(*parts[2:]).as_posix(), safe='/')}"
+        except (ValueError, OSError):
+            pass
     return public
 
 
@@ -227,9 +449,10 @@ def public_task(task: dict[str, Any]) -> dict[str, Any]:
     public = {
         key: task.get(key)
         for key in (
-            "id", "kind", "profile", "prompt", "status", "created_at", "started_at",
+            "id", "kind", "provider", "profile", "prompt", "status", "created_at", "started_at",
             "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
-            "video_url", "local_video_url", "error", "queue_position",
+            "local_image_url", "video_url", "local_video_url", "error", "queue_position",
+            "folder_id", "history_version",
         )
     }
     public["reference_files"] = [
@@ -240,8 +463,20 @@ def public_task(task: dict[str, Any]) -> dict[str, Any]:
     return public
 
 
-def copy_references(task_id: str, fields: cgi.FieldStorage) -> list[dict[str, str]]:
-    destination = UPLOADS_DIR / task_id
+def workspace_result_dir(folder_id: str = "") -> Path:
+    return RESULTS_DIR if not folder_id else COLLECTIONS_DIR / folder_id / "results"
+
+
+def workspace_upload_dir(folder_id: str = "") -> Path:
+    return UPLOADS_DIR if not folder_id else COLLECTIONS_DIR / folder_id / "uploads"
+
+
+def workspace_media_url(folder_id: str, area: str, file_name: str) -> str:
+    return MEDIA_LIBRARY.media_url(folder_id, area, file_name)
+
+
+def copy_references(task_id: str, fields: cgi.FieldStorage, folder_id: str = "") -> list[dict[str, str]]:
+    destination = workspace_upload_dir(folder_id) / task_id
     destination.mkdir(parents=True, exist_ok=True)
     copied: list[dict[str, str]] = []
     # FieldStorage.getlist() returns file values as bytes. Keep the original
@@ -261,28 +496,75 @@ def copy_references(task_id: str, fields: cgi.FieldStorage) -> list[dict[str, st
     return copied
 
 
+def parse_reference_urls(raw: str) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    for value in (line.strip() for line in raw.splitlines()):
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError(f"参考素材 URL 无效：{value[:100]}")
+        name = Path(parsed.path).name or f"reference-{len(references) + 1}"
+        mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        references.append({"name": name, "path": "", "url": value, "mime": mime})
+    return references
+
+
+def validate_task_input(
+    kind: str,
+    profile: str,
+    prompt: str,
+    ratio: str,
+    duration: str,
+    resolution: str,
+    references: list[dict[str, str]],
+) -> str:
+    """Validate provider-specific input before a paid request is queued."""
+    if kind not in {"image", "video"}:
+        raise ValueError("不支持的任务类型")
+    if not prompt:
+        raise ValueError("至少输入一条提示词")
+    if hfsy_client.is_hfsy_profile(profile):
+        spec = hfsy_client.MODEL_SPECS[profile]
+        if spec["kind"] != kind:
+            raise ValueError("图片模型与视频任务类型不匹配" if spec["kind"] == "image" else "视频模型与图片任务类型不匹配")
+        local_references = [ref for ref in references if ref.get("path") and not ref.get("url")]
+        if local_references:
+            tos_status = tos_uploader.config_status(private_env_value)
+            if not tos_status["ready"]:
+                raise RuntimeError(f"HFSY 本地素材需要配置 TOS：{', '.join(tos_status['missing'])}")
+        reference_contract = [
+            (str(ref.get("url") or f"https://tos-upload.invalid/{index}"), ref.get("mime", ""))
+            for index, ref in enumerate(references)
+        ]
+        hfsy_client.build_generation_request(profile, prompt, ratio, resolution, reference_contract, duration)
+        return "hfsy"
+    if kind == "video" and profile != "seedance-reference-video-ark-direct":
+        raise ValueError("视频任务请使用 Seedance Reference Video")
+    if kind == "image" and profile not in {"seedream43-ark-direct", "seedream50-pro-ark-direct"}:
+        raise ValueError("图片任务请选择可用的 Seedream 模型")
+    if kind == "video" and resolution != "720p":
+        raise ValueError("当前 Seedance Fast 仅支持 720p；已阻止提交无效的 1080p 请求。")
+    return "ark"
+
+
 def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
     kind = fields.getfirst("kind", "image")
     profile = fields.getfirst("profile", "")
     raw_prompts = fields.getfirst("prompts", "").strip()
     prompts = [raw_prompts] if raw_prompts else []
-    if kind not in {"image", "video"}:
-        raise ValueError("不支持的任务类型")
-    if not prompts:
-        raise ValueError("至少输入一条提示词")
-    expected_profile = "seedance-reference-video-ark-direct" if kind == "video" else None
-    if expected_profile and profile != expected_profile:
-        raise ValueError("视频任务请使用 Seedance Reference Video")
-    if kind == "image" and profile not in {"seedream43-ark-direct", "seedream50-pro-ark-direct"}:
-        raise ValueError("图片任务请选择可用的 Seedream 模型")
+    folder_id = str(fields.getfirst("folder_id", "") or "")
+    if not MEDIA_LIBRARY.folder_exists(folder_id):
+        raise ValueError("收藏夹不存在，请刷新页面后重试")
     shared_id = uuid.uuid4().hex[:10]
-    references = copy_references(shared_id, fields)
-    print(f"[{time.strftime('%H:%M:%S')}] queued {kind} batch: {len(prompts)} task(s), {len(references)} reference file(s)")
+    references = copy_references(shared_id, fields, folder_id)
+    if hfsy_client.is_hfsy_profile(profile):
+        references.extend(parse_reference_urls(fields.getfirst("reference_urls", "")))
     ratio = fields.getfirst("ratio", "9:16")
     duration = fields.getfirst("duration", "15")
     resolution = fields.getfirst("resolution", "720p")
-    if kind == "video" and resolution != "720p":
-        raise ValueError("当前 Seedance Fast 仅支持 720p；已阻止提交无效的 1080p 请求。")
+    provider = validate_task_input(kind, profile, raw_prompts, ratio, duration, resolution, references)
+    print(f"[{time.strftime('%H:%M:%S')}] queued {provider}/{kind}: {len(prompts)} task(s), {len(references)} reference file(s)")
     created: list[dict[str, Any]] = []
     with LOCK:
         for prompt in prompts:
@@ -290,6 +572,7 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
             task = {
                 "id": task_id,
                 "kind": kind,
+                "provider": provider,
                 "profile": profile,
                 "prompt": prompt,
                 "status": "queued",
@@ -301,15 +584,21 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
                 "duration": duration,
                 "resolution": resolution,
                 "image_url": "",
+                "local_image_url": "",
                 "video_url": "",
                 "local_video_url": "",
                 "error": "",
-                "queue_position": len([t for t in TASKS.values() if t["status"] == "queued"]) + 1,
+                "queue_position": len([
+                    queued for queued in TASKS.values()
+                    if queued["status"] == "queued" and queued["kind"] == kind
+                ]) + 1,
+                "folder_id": folder_id,
+                "history_version": HISTORY_VERSION,
             }
             TASKS[task_id] = task
             created.append(task)
             record_task_event("queued", task)
-            EXECUTOR.submit(run_task, task_id)
+            EXECUTORS[kind].submit(run_task, task_id)
     return created
 
 
@@ -324,6 +613,47 @@ def parse_model_result(raw: str) -> dict[str, Any]:
     return payload
 
 
+def download_image_result(image_url: str, task_id: str, folder_id: str = "") -> str:
+    """Download one generated image and return its local media URL."""
+    with urlopen(image_url, timeout=120) as response:
+        content_type = response.headers.get_content_type()
+        suffix = Path(urlparse(image_url).path).suffix.lower()
+        if suffix not in {".jpg", ".jpeg", ".png", ".webp", ".gif"}:
+            suffix = mimetypes.guess_extension(content_type) or ".jpg"
+        directory = workspace_result_dir(folder_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / f"{task_id}{suffix}"
+        temporary = target.with_suffix(target.suffix + ".part")
+        with temporary.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        temporary.replace(target)
+    return workspace_media_url(folder_id, "results", target.name)
+
+
+def run_hfsy_generation(task: dict[str, Any], api_key: str) -> dict[str, str]:
+    prepared: list[dict[str, str]] = []
+    hosted: list[dict[str, str]] = []
+    try:
+        for reference in task["reference_files"]:
+            if reference.get("url"):
+                prepared.append(reference)
+            else:
+                uploaded = tos_uploader.upload_reference(reference, private_env_value)
+                prepared.append(uploaded)
+                hosted.append(uploaded)
+        return hfsy_client.generate(
+            profile=task["profile"], prompt=task["prompt"], ratio=task["ratio"],
+            resolution=task["resolution"], references=prepared,
+            duration=task["duration"], api_key=api_key,
+        )
+    finally:
+        try:
+            tos_uploader.delete_hosted_references(hosted, private_env_value)
+        except Exception as exc:
+            # Cleanup must not hide a successful generation or its real failure.
+            print(f"[{time.strftime('%H:%M:%S')}] TOS temporary-object cleanup failed: {exc}")
+
+
 def run_task(task_id: str) -> None:
     with LOCK:
         task = TASKS.get(task_id)
@@ -334,38 +664,54 @@ def run_task(task_id: str) -> None:
         task["queue_position"] = None
         record_task_event("started", task)
 
-    command = [sys.executable, str(SKILL_CALLER), "run", "--profile", task["profile"], "--prompt", task["prompt"]]
     references = task["reference_files"]
-    if task["kind"] == "image":
-        command.extend(arg for ref in references if ref["mime"].startswith("image/") for arg in ("--image-file", ref["path"]))
-    else:
-        for ref in references:
-            if ref["mime"].startswith("image/"):
-                command.extend(("--image-file", ref["path"]))
-            elif ref["mime"].startswith("video/"):
-                command.extend(("--video-file", ref["path"]))
-            elif ref["mime"].startswith("audio/"):
-                command.extend(("--audio-file", ref["path"]))
-        output_path = RESULTS_DIR / f"{task_id}.mp4"
-        command.extend(("--ratio", task["ratio"], "--duration", task["duration"], "--resolution", task["resolution"], "--output-file", str(output_path)))
-
     try:
-        print(f"[{time.strftime('%H:%M:%S')}] starting {task['kind']} task {task_id}: {len(references)} reference file(s)")
-        child_env = model_child_env(task["kind"])
-        completed = subprocess.run(
-            command, cwd=APP_DIR, capture_output=True, text=True, timeout=1950, check=False, env=child_env
-        )
-        result = parse_model_result(completed.stdout)
-        if completed.returncode != 0:
-            raise RuntimeError(result.get("error") or "模型调用失败")
+        print(f"[{time.strftime('%H:%M:%S')}] starting {task.get('provider', 'ark')}/{task['kind']} task {task_id}: {len(references)} reference file(s)")
+        if task.get("provider") == "hfsy":
+            api_key = private_env_value("HFSY_API_KEY")
+            if not api_key:
+                raise RuntimeError("未配置 HFSY_API_KEY。请在 .env 中填写 HFSY API Key。")
+            result = run_hfsy_generation(task, api_key)
+            image_url = str(result.get("result_url") or "") if task["kind"] == "image" else ""
+            video_url = str(result.get("result_url") or "") if task["kind"] == "video" else ""
+        else:
+            command = [sys.executable, str(SKILL_CALLER), "run", "--profile", task["profile"], "--prompt", task["prompt"]]
+            if task["kind"] == "image":
+                command.extend(arg for ref in references if ref["mime"].startswith("image/") for arg in ("--image-file", ref["path"]))
+            else:
+                for ref in references:
+                    if ref["mime"].startswith("image/"):
+                        command.extend(("--image-file", ref["path"]))
+                    elif ref["mime"].startswith("video/"):
+                        command.extend(("--video-file", ref["path"]))
+                    elif ref["mime"].startswith("audio/"):
+                        command.extend(("--audio-file", ref["path"]))
+                output_path = workspace_result_dir(str(task.get("folder_id") or "")) / f"{task_id}.mp4"
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                command.extend(("--ratio", task["ratio"], "--duration", task["duration"], "--resolution", task["resolution"], "--output-file", str(output_path)))
+            completed = subprocess.run(
+                command, cwd=APP_DIR, capture_output=True, text=True, timeout=1950, check=False, env=model_child_env(task["kind"])
+            )
+            result = parse_model_result(completed.stdout)
+            if completed.returncode != 0:
+                raise RuntimeError(result.get("error") or "模型调用失败")
+            image_url = str(result.get("image_url") or "")
+            video_url = str(result.get("video_url") or "")
+        local_image_url = ""
+        if task["kind"] == "image":
+            if not image_url:
+                raise RuntimeError("模型未返回图片地址")
+            local_image_url = download_image_result(image_url, task_id, str(task.get("folder_id") or ""))
         with LOCK:
             task["status"] = "completed"
-            task["image_url"] = str(result.get("image_url") or "")
-            task["video_url"] = str(result.get("video_url") or "")
+            task["image_url"] = image_url
+            task["local_image_url"] = local_image_url
+            task["video_url"] = video_url
             output_file = result.get("output_file")
             if output_file and Path(output_file).exists():
-                task["local_video_url"] = f"/media/results/{Path(output_file).name}"
+                task["local_video_url"] = workspace_media_url(str(task.get("folder_id") or ""), "results", Path(output_file).name)
             task["finished_at"] = now()
+            register_completed_task(task)
             record_task_event("completed", task)
     except subprocess.TimeoutExpired:
         with LOCK:
@@ -398,17 +744,23 @@ class StudioHandler(SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/health":
-            keys = set(configured_env_keys()) | set(os.environ)
-            return self.respond_json({
-                "ok": True,
-                "image_ready": "ARK_API_KEY" in keys,
-                "video_ready": "SEEDANCE_ARK_API_KEY" in keys,
-                "workers": MAX_WORKERS,
-            })
+            return self.respond_json(health_flags())
         if path == "/api/tasks":
             with LOCK:
                 tasks = sorted(TASKS.values(), key=lambda item: item["created_at"], reverse=True)
                 return self.respond_json({"tasks": [public_task(task) for task in tasks]})
+        if path == "/api/usage":
+            return self.respond_json(daily_usage())
+        if path == "/api/library":
+            snapshot = MEDIA_LIBRARY.snapshot()
+            return self.respond_json({
+                "ok": True,
+                "folders": snapshot["folders"],
+                "assets": sorted(snapshot["assets"], key=lambda item: item.get("created_at", 0), reverse=True),
+            })
+        if path == "/api/inspirations":
+            snapshot = INSPIRATION_LIBRARY.snapshot()
+            return self.respond_json({"ok": True, "items": sorted(snapshot["items"], key=lambda item: item.get("created_at", 0), reverse=True)})
         if path.startswith("/media/"):
             return self.serve_media(path)
         if path in {"/", "/index.html"}:
@@ -426,6 +778,25 @@ class StudioHandler(SimpleHTTPRequestHandler):
             except ValueError:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
+        elif relative.startswith("collections/"):
+            parts = Path(relative).parts
+            if len(parts) < 4 or not re.fullmatch(r"[A-Za-z0-9_-]+", parts[1]) or parts[2] not in {"results", "uploads"}:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            base = (COLLECTIONS_DIR / parts[1] / parts[2]).resolve()
+            try:
+                target = (base / Path(*parts[3:])).resolve()
+                target.relative_to(base)
+            except ValueError:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+        elif relative.startswith("inspirations/"):
+            try:
+                target = (INSPIRATIONS_DIR / relative.removeprefix("inspirations/")).resolve()
+                target.relative_to(INSPIRATIONS_DIR.resolve())
+            except ValueError:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -440,22 +811,101 @@ class StudioHandler(SimpleHTTPRequestHandler):
             shutil.copyfileobj(file, self.wfile)
 
     def do_POST(self) -> None:
-        if urlparse(self.path).path != "/api/tasks":
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
+        path = urlparse(self.path).path
+        try:
+            if path == "/api/tasks":
+                fields = self.read_multipart()
+                tasks = create_tasks(fields)
+                return self.respond_json({"ok": True, "tasks": [public_task(task) for task in tasks]}, HTTPStatus.ACCEPTED)
+            if path == "/api/library/folders":
+                folder = MEDIA_LIBRARY.create_folder(str(self.read_json().get("name") or ""))
+                return self.respond_json({"ok": True, "folder": folder}, HTTPStatus.CREATED)
+            if path == "/api/inspirations":
+                task_id = str(self.read_json().get("task_id") or "")
+                with LOCK:
+                    task = TASKS.get(task_id)
+                    if not task:
+                        raise ValueError("任务不存在")
+                    task_snapshot = dict(task)
+                item = INSPIRATION_LIBRARY.create_from_task(task_snapshot)
+                return self.respond_json({"ok": True, "item": item}, HTTPStatus.CREATED)
+            if path == "/api/library/assets":
+                fields = self.read_multipart()
+                raw_media = fields["media"] if "media" in fields else None
+                media = raw_media[0] if isinstance(raw_media, list) and raw_media else raw_media
+                if media is None or not getattr(media, "filename", None) or not getattr(media, "file", None):
+                    raise ValueError("请选择要导入的图片或视频")
+                mime = str(getattr(media, "type", "") or mimetypes.guess_type(media.filename)[0] or "application/octet-stream")
+                asset = MEDIA_LIBRARY.import_stream(
+                    Path(media.filename).name,
+                    mime,
+                    media.file,
+                    str(fields.getfirst("folder_id", "") or ""),
+                )
+                return self.respond_json({"ok": True, "asset": asset}, HTTPStatus.CREATED)
+            move_match = re.fullmatch(r"/api/library/assets/([A-Za-z0-9_-]+)/move", path)
+            if move_match:
+                asset = move_library_asset(move_match.group(1), str(self.read_json().get("folder_id") or ""))
+                return self.respond_json({"ok": True, "asset": asset})
+            return self.respond_json({"ok": False, "error": "接口不存在"}, HTTPStatus.NOT_FOUND)
+        except ValueError as exc:
+            return self.respond_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except Exception as exc:
+            return self.respond_json({"ok": False, "error": str(exc)[:500] or "请求处理失败"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def do_DELETE(self) -> None:
+        path = urlparse(self.path).path
+        try:
+            task_match = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)", path)
+            if task_match:
+                deleted = delete_task(task_match.group(1))
+                return self.respond_json({"ok": True, "deleted_task": deleted["task"], "trash_path": deleted["trash_path"]})
+            asset_match = re.fullmatch(r"/api/library/assets/([A-Za-z0-9_-]+)", path)
+            if asset_match:
+                deleted = delete_library_asset(asset_match.group(1))
+                return self.respond_json({"ok": True, "deleted_asset": deleted["asset"], "trash_path": deleted["trash_path"]})
+            inspiration_match = re.fullmatch(r"/api/inspirations/([A-Za-z0-9_-]+)", path)
+            if inspiration_match:
+                trash_root = _new_trash_root("inspiration", inspiration_match.group(1))
+                deleted = INSPIRATION_LIBRARY.delete(inspiration_match.group(1), trash_root)
+                return self.respond_json({"ok": True, "deleted_item": deleted["item"], "trash_path": str(trash_root)})
+            folder_match = re.fullmatch(r"/api/library/folders/([A-Za-z0-9_-]+)", path)
+            if folder_match:
+                deleted = delete_collection_folder(folder_match.group(1))
+                return self.respond_json({"ok": True, "deleted_folder": deleted["folder"]})
+            return self.respond_json({"ok": False, "error": "接口不存在"}, HTTPStatus.NOT_FOUND)
+        except ValueError as exc:
+            return self.respond_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        except Exception as exc:
+            return self.respond_json({"ok": False, "error": str(exc)[:500] or "请求处理失败"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def read_json(self) -> dict[str, Any]:
+        content_type = self.headers.get("Content-Type", "")
+        if not content_type.startswith("application/json"):
+            raise ValueError("请求格式必须为 application/json")
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("请求长度无效") from exc
+        if length <= 0 or length > 65_536:
+            raise ValueError("请求内容不能为空或过大")
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("请求 JSON 无效") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("请求 JSON 必须是对象")
+        return payload
+
+    def read_multipart(self) -> cgi.FieldStorage:
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("multipart/form-data"):
-            return self.respond_json({"ok": False, "error": "请求格式必须为 multipart/form-data"}, HTTPStatus.BAD_REQUEST)
-        try:
-            fields = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={
-                "REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type,
-            })
-            tasks = create_tasks(fields)
-            self.respond_json({"ok": True, "tasks": [public_task(task) for task in tasks]}, HTTPStatus.ACCEPTED)
-        except ValueError as exc:
-            self.respond_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
-        except Exception as exc:
-            self.respond_json({"ok": False, "error": f"创建任务失败：{str(exc)[:500]}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            raise ValueError("请求格式必须为 multipart/form-data")
+        return cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ={
+            "REQUEST_METHOD": "POST",
+            "CONTENT_TYPE": content_type,
+            "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
+        })
 
     def respond_json(self, data: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")

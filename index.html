@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Model Studio · Seedream / Seedance</title>
+    <title>Model Studio · Multi-provider Image / Video</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -11,6 +11,13 @@
     <header class="topbar">
       <a class="brand" href="/" aria-label="Model Studio 首页"><span class="brand-mark">M</span><span>MODEL<br />STUDIO</span></a>
       <div class="system-status"><span class="pulse"></span><span id="health-text">正在检查本机模型配置</span></div>
+      <div class="usage-wrap">
+        <button id="usage-toggle" class="usage-toggle" type="button" aria-expanded="false" aria-controls="usage-panel"><span>今日用量</span><strong id="usage-total">0</strong><em>次</em></button>
+        <section id="usage-panel" class="usage-panel hidden" aria-label="今日各模型用量">
+          <div class="usage-heading"><strong>今日生成</strong><small>仅提醒，不会限制生成</small></div>
+          <div id="usage-list"></div>
+        </section>
+      </div>
       <div class="topbar-note">LOCAL ONLY · v1.0</div>
     </header>
 
@@ -24,7 +31,8 @@
       <section class="composer">
         <div class="section-kicker">NEW PRODUCTION <span id="kind-label">/ IMAGE</span></div>
         <h1 id="title">把一个想法<br /><i>做成图像。</i></h1>
-        <p class="intro" id="intro">使用 Seedream 直接生成。每行一条提示词，即可排入批量队列。</p>
+        <p class="intro" id="intro">选择模型后直接生成，每次提交对应一个完整任务。</p>
+        <div class="workspace-target" id="workspace-target"><span>OUTPUT TO</span><strong>成片区</strong></div>
 
         <form id="generation-form">
           <div class="field model-field">
@@ -35,16 +43,16 @@
             </select>
           </div>
 
-          <div id="video-options" class="video-options hidden">
-            <div class="field"><label for="ratio">画幅</label><select id="ratio" name="ratio"><option>9:16</option><option>16:9</option><option>1:1</option></select></div>
-            <div class="field"><label for="duration">时长</label><select id="duration" name="duration"><option value="15">15 秒</option><option value="10">10 秒</option><option value="5">5 秒</option></select></div>
-            <div class="field"><label for="resolution">清晰度</label><select id="resolution" name="resolution"><option value="720p">720p（Seedance Fast）</option></select></div>
+          <div id="generation-options" class="video-options hidden">
+            <div class="field"><label for="ratio">画幅</label><select id="ratio" name="ratio"></select></div>
+            <div class="field" id="duration-field"><label for="duration">时长</label><select id="duration" name="duration"></select></div>
+            <div class="field"><label for="resolution">清晰度</label><select id="resolution" name="resolution"></select></div>
           </div>
 
           <div class="field prompt-field">
-            <div class="label-row"><label for="prompts">提示词</label><span id="batch-count">01 / 40</span></div>
+            <div class="label-row"><label for="prompts">提示词</label><span id="batch-count">当前任务 / 01</span></div>
             <textarea id="prompts" name="prompts" rows="7" placeholder="一位穿着银色裙装的女性，站在暴雨后的城市街道，电影感，低饱和、胶片颗粒"></textarea>
-            <span class="hint" id="prompt-hint">换行即可批量生成 · 每条提示词独立成为一个任务</span>
+            <span class="hint" id="prompt-hint">整段提示词会作为一次生成提交 · 支持自由换行</span>
           </div>
 
           <div class="field references-field">
@@ -62,30 +70,104 @@
       </section>
 
       <section class="gallery-panel">
-        <div class="gallery-head"><div><span class="section-kicker">PRODUCTION QUEUE</span><h2>成片台</h2></div><button class="refresh" id="refresh-button" type="button">刷新 ↻</button></div>
-        <div class="legend"><span><b class="dot queued"></b>等待</span><span><b class="dot running"></b>制作中</span><span><b class="dot completed"></b>已完成</span></div>
-        <div class="gallery" id="gallery">
-          <div class="empty"><span>◌</span><p>还没有任务</p><small>从左侧输入提示词，第一张成片会出现在这里。</small></div>
+        <div class="gallery-head">
+          <div><span class="section-kicker">PRODUCTION QUEUE</span><h2>成片台</h2></div>
+          <div class="gallery-head-actions">
+            <div class="production-tabs workspace-tabs" id="production-tabs" role="tablist" aria-label="生成工作区">
+              <button class="production-tab active" type="button" role="tab" aria-selected="true" data-workspace-id="tasks">成片区</button>
+              <button class="production-tab" id="inspiration-tab" type="button" role="tab" aria-selected="false" data-workspace-id="inspirations">视频灵感</button>
+              <button class="production-tab workspace-add" id="create-folder-button" type="button" aria-label="新建收藏夹">＋</button>
+            </div>
+            <button class="refresh" id="refresh-button" type="button" aria-label="刷新成片区">刷新 <span aria-hidden="true">↻</span></button>
+          </div>
         </div>
+        <div id="task-view" role="tabpanel">
+          <div class="queue-overview" id="queue-overview" role="status" aria-live="polite" aria-label="任务状态概览">
+            <div class="queue-stat total"><strong id="count-total">0</strong><span>全部</span></div>
+            <div class="queue-stat active"><strong id="count-active">0</strong><span>进行中</span></div>
+            <div class="queue-stat completed"><strong id="count-completed">0</strong><span>已完成</span></div>
+            <div class="queue-stat failed"><strong id="count-failed">0</strong><span>失败</span></div>
+          </div>
+          <div class="gallery" id="gallery">
+            <div class="empty"><span>◌</span><p>还没有任务</p><small>从左侧输入提示词，第一张成片会出现在这里。</small></div>
+          </div>
+        </div>
+        <section id="inspiration-view" class="inspiration-view hidden" role="tabpanel" aria-label="视频 Prompt 灵感库">
+          <div class="inspiration-intro"><span class="section-kicker">VIDEO PROMPT ARCHIVE</span><h3>视频 Prompt 灵感库</h3><p>保存值得复用的视频、Prompt 与有序参考图。</p></div>
+          <p id="inspiration-error" class="library-error" role="alert"></p>
+          <div id="inspiration-grid" class="inspiration-grid"></div>
+        </section>
+        <section id="library-view" class="library-view hidden" role="tabpanel" aria-label="素材收藏夹">
+          <div class="library-toolbar">
+            <div>
+              <strong id="active-folder-name">收藏夹</strong>
+              <small id="folder-task-status">当前页面生成的内容会自动进入这里</small>
+            </div>
+            <div class="library-toolbar-actions">
+              <label class="library-import" for="library-import">导入素材 ↗
+                <input id="library-import" type="file" multiple accept="image/*,video/*" />
+              </label>
+              <button id="delete-folder-button" class="danger-action" type="button">删除收藏夹</button>
+            </div>
+          </div>
+          <p id="library-error" class="library-error" role="alert"></p>
+          <div class="asset-grid" id="asset-grid"></div>
+        </section>
       </section>
     </main>
 
     <template id="task-template">
       <article class="task-card">
-        <div class="media-frame"><div class="placeholder">M</div></div>
-        <div class="card-meta"><span class="task-kind"></span><span class="task-status"></span></div>
-        <p class="task-prompt"></p>
-        <details class="task-prompt-details" hidden>
-          <summary>展开完整提示词</summary>
-          <p class="task-prompt-full"></p>
-        </details>
-        <div class="card-actions"></div>
+        <div class="media-frame">
+          <div class="placeholder"><span class="placeholder-mark">M</span><small class="placeholder-label">等待调度</small></div>
+          <div class="status-badge"><span class="status-dot"></span><span class="task-status"></span></div>
+        </div>
+        <div class="card-body">
+          <div class="card-meta"><span class="task-kind"></span></div>
+          <p class="task-prompt"></p>
+          <details class="task-prompt-details">
+            <summary>完整提示词</summary>
+            <p class="task-prompt-full"></p>
+          </details>
+          <details class="task-error-details" hidden>
+            <summary>查看失败原因</summary>
+            <p class="error-detail"></p>
+          </details>
+          <div class="card-actions"></div>
+        </div>
       </article>
     </template>
     <dialog id="image-preview-dialog" class="image-preview-dialog" aria-label="生成图片大图预览">
       <button type="button" class="close-preview" data-close-preview aria-label="关闭大图预览">×</button>
       <img alt="" />
       <p class="preview-caption"></p>
+    </dialog>
+    <dialog id="folder-dialog" class="library-dialog" aria-labelledby="folder-dialog-title">
+      <form id="folder-form">
+        <span class="section-kicker">NEW COLLECTION</span>
+        <h3 id="folder-dialog-title">新建收藏夹</h3>
+        <label for="folder-name">名称</label>
+        <input id="folder-name" name="name" maxlength="60" autocomplete="off" placeholder="例如：可用镜头" required />
+        <p class="dialog-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" data-close-dialog>取消</button>
+          <button type="submit" class="dialog-primary">创建</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="move-asset-dialog" class="library-dialog" aria-labelledby="move-dialog-title">
+      <form id="move-asset-form">
+        <span class="section-kicker">ORGANIZE ASSET</span>
+        <h3 id="move-dialog-title">放入收藏夹</h3>
+        <p class="move-asset-name"></p>
+        <label for="move-folder-select">目标收藏夹</label>
+        <select id="move-folder-select" name="folder_id"></select>
+        <p class="dialog-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" data-close-dialog>取消</button>
+          <button type="submit" class="dialog-primary">确认</button>
+        </div>
+      </form>
     </dialog>
     <script src="app.js"></script>
   </body>
