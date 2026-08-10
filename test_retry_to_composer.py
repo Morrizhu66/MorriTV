@@ -10,7 +10,8 @@ class RetryToComposerTests(unittest.TestCase):
         self.js = (APP_DIR / "app.js").read_text(encoding="utf-8")
 
     def test_history_card_has_a_non_submitting_retry_to_composer_action(self):
-        self.assertIn("retry.textContent = '带回输入重试 ↶'", self.js)
+        self.assertIn("retry.textContent = '再次制作 ↶'", self.js)
+        self.assertIn("retry.type = 'button'", self.js)
         self.assertIn("retry.addEventListener('click', () => restoreTaskInput(task))", self.js)
 
     def test_retry_restores_full_prompt_parameters_and_reference_files(self):

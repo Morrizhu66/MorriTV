@@ -32,7 +32,9 @@ def task_snapshot(task_id: str, status: str, **changes):
         "duration": "15",
         "resolution": "720p",
         "image_url": "",
+        "local_image_url": "",
         "local_video_url": "/media/results/example.mp4",
+        "folder_id": "collection-a",
         "error": "",
         "queue_position": None,
     }
@@ -69,8 +71,10 @@ class TaskHistoryRecoveryTests(unittest.TestCase):
         restored = self.server.TASKS["task-1"]
         self.assertEqual(restored["status"], "completed")
         self.assertEqual(restored["prompt"], "A complete multi-line prompt\nthat must survive restart.")
+        self.assertEqual(restored["local_image_url"], "")
         self.assertEqual(restored["local_video_url"], "/media/results/example.mp4")
         self.assertEqual(restored["finished_at"], 105.0)
+        self.assertEqual(restored["folder_id"], "collection-a")
 
     def test_marks_interrupted_task_as_failed_without_requeuing_it(self):
         self.write_events({"event": "started", "task": task_snapshot("task-2", "running")})
@@ -88,7 +92,9 @@ class TaskHistoryRecoveryTests(unittest.TestCase):
         event = json.loads(self.history_path.read_text(encoding="utf-8"))
         self.assertEqual(event["event"], "completed")
         self.assertEqual(event["task"]["prompt"], "A complete multi-line prompt\nthat must survive restart.")
+        self.assertIn("local_image_url", event["task"])
         self.assertEqual(event["task"]["local_video_url"], "/media/results/example.mp4")
+        self.assertEqual(event["task"]["folder_id"], "collection-a")
 
     def test_public_task_exposes_a_retryable_reference_url_without_disk_path(self):
         task = task_snapshot("task-4", "completed")
@@ -102,6 +108,13 @@ class TaskHistoryRecoveryTests(unittest.TestCase):
 
         self.assertEqual(reference["url"], "/media/uploads/batch-1/01-look.png")
         self.assertNotIn("path", reference)
+
+    def test_legacy_history_defaults_to_version_one_and_new_snapshots_use_two(self):
+        legacy = self.server.restore_history_task(task_snapshot("legacy", "failed"))
+        current = task_snapshot("current", "failed", history_version=2)
+
+        self.assertEqual(legacy["history_version"], 1)
+        self.assertEqual(self.server.history_task_snapshot(current)["history_version"], 2)
 
 
 if __name__ == "__main__":
