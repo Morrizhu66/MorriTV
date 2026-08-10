@@ -34,6 +34,7 @@ def task_snapshot(task_id: str, status: str, **changes):
         "image_url": "",
         "local_image_url": "",
         "local_video_url": "/media/results/example.mp4",
+        "folder_id": "collection-a",
         "error": "",
         "queue_position": None,
     }
@@ -73,6 +74,7 @@ class TaskHistoryRecoveryTests(unittest.TestCase):
         self.assertEqual(restored["local_image_url"], "")
         self.assertEqual(restored["local_video_url"], "/media/results/example.mp4")
         self.assertEqual(restored["finished_at"], 105.0)
+        self.assertEqual(restored["folder_id"], "collection-a")
 
     def test_marks_interrupted_task_as_failed_without_requeuing_it(self):
         self.write_events({"event": "started", "task": task_snapshot("task-2", "running")})
@@ -92,6 +94,7 @@ class TaskHistoryRecoveryTests(unittest.TestCase):
         self.assertEqual(event["task"]["prompt"], "A complete multi-line prompt\nthat must survive restart.")
         self.assertIn("local_image_url", event["task"])
         self.assertEqual(event["task"]["local_video_url"], "/media/results/example.mp4")
+        self.assertEqual(event["task"]["folder_id"], "collection-a")
 
     def test_public_task_exposes_a_retryable_reference_url_without_disk_path(self):
         task = task_snapshot("task-4", "completed")

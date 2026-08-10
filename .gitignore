@@ -6,7 +6,12 @@
 # Generated user data
 uploads/
 results/
+trash/
+inspirations/
+collections/
 task-history.jsonl
+media-library.json
+inspiration-library.json
 *.log
 
 # Local notes and prompt exports
