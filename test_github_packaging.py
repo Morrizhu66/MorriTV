@@ -39,7 +39,10 @@ class GithubPackagingTests(unittest.TestCase):
         for model in ("gpt-image-2", "gpt-image-2pro", "nano-banana-2", "nano-banana-pro"):
             self.assertIn(model, readme)
         self.assertNotIn("minimax-h3", readme)
-        self.assertNotIn("sd-2.5", readme)
+        self.assertNotIn("`sd-2`", readme)
+        self.assertIn("`sd-2.0`", readme)
+        self.assertIn("4–15 秒", readme)
+        self.assertIn("sd-2.5-720", readme)
 
     def test_server_uses_the_bundled_model_caller(self):
         import server

@@ -58,6 +58,25 @@ class GalleryFrontendContractTests(unittest.TestCase):
         self.assertIn("frame.querySelector('.placeholder').replaceWith(openPreview);", task_card)
         self.assertIn("frame.querySelector('.placeholder').replaceWith(video);", task_card)
 
+    def test_completed_task_videos_load_metadata_to_show_the_first_frame(self):
+        task_card = self.js[
+            self.js.index("function taskCard(task)"):
+            self.js.index("function link(label, href)")
+        ]
+
+        self.assertIn("video.preload = 'metadata'", task_card)
+
+    def test_task_video_previews_load_only_near_the_viewport(self):
+        task_card = self.js[
+            self.js.index("function taskCard(task)"):
+            self.js.index("function link(label, href)")
+        ]
+
+        self.assertIn("const taskVideoPreviewObserver", self.js)
+        self.assertIn("function loadTaskVideoPreview(video, source)", self.js)
+        self.assertIn("loadTaskVideoPreview(video, task.local_video_url || task.video_url);", task_card)
+        self.assertNotIn("video.src = task.local_video_url || task.video_url", task_card)
+
 
 if __name__ == "__main__":
     unittest.main()

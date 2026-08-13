@@ -9,6 +9,7 @@
 - 图片：Seedream 5.0 Pro、Seedream 4.3，支持多张参考图和原图预览。
 - 视频：Seedance Reference Video，支持图片、视频、音频参考素材及带音频视频生成。
 - HFSY 图片：GPT Image 2（`gpt-image-2`）、GPT Image 2 Pro（`gpt-image-2pro`）、Nano Banana 2（`nano-banana-2`）、Nano Banana 2 Pro（`nano-banana-pro`）。
+- HFSY 视频：SD 2.0（`sd-2.0`）支持 4–15 秒；SD 2.5 720P（`sd-2.5-720`）支持 4–30 秒。两者均支持图片、视频、音频混合参考。
 - 任务：一次提交对应一个完整任务；多行提示词不会被拆分。
 - 本地记录：任务状态保存在本机，重启后可以恢复查看。
 
@@ -70,7 +71,7 @@ python3 server.py
 
 - `.env`、上传素材、生成结果、任务历史和日志均已写入 `.gitignore`。
 - `uploads/` 保存参考素材，`results/` 保存下载后的图片与视频，`task-history.jsonl` 保存本机任务记录。
-- 生成结果的远程 URL 可能有有效期；图片完成后会自动下载到本地 `results/`。
+- 生成结果的远程 URL 可能有有效期；图片和视频完成后都会自动下载到本地 `results/`。
 - 服务只监听本机回环地址，不应直接暴露到公网。
 
 停止服务时，在启动终端按 `Ctrl+C`。通过 macOS 启动器启动时，可运行：

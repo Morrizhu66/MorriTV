@@ -9,6 +9,24 @@ const gallery = document.querySelector('#gallery');
 const fileInput = document.querySelector('#references');
 const productionTabs = document.querySelector('#production-tabs');
 const assetGrid = document.querySelector('#asset-grid');
+const taskVideoPreviewObserver = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (!entry.isIntersecting) return;
+    const video = entry.target;
+    video.src = video.dataset.src;
+    video.removeAttribute('data-src');
+    taskVideoPreviewObserver.unobserve(video);
+  });
+}, { rootMargin: '320px 0px' }) : null;
+const localVideoPreviewObserver = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (!entry.isIntersecting) return;
+    const video = entry.target;
+    video.src = video.dataset.src;
+    video.removeAttribute('data-src');
+    localVideoPreviewObserver.unobserve(video);
+  });
+}, { rootMargin: '320px 0px' }) : null;
 
 const MODEL_CATALOG = {
   'seedream50-pro-ark-direct': { label: 'Seedream 5.0 Pro · 2K', provider: 'ark', kind: 'image', accept: 'image/*', maxImages: 8, ratios: [], resolutions: [], intro: '使用 Seedream 5.0 Pro 生成图片。' },
@@ -17,10 +35,24 @@ const MODEL_CATALOG = {
   'hfsy-gpt-image-2pro': { label: 'GPT Image 2 Pro · 2K / 4K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 4, ratios: ['1:1','5:4','9:16','16:9','4:3','3:2','4:5','3:4','2:3','21:9'], resolutions: ['2K','4K'], intro: 'HFSY · GPT Image 2 Pro，支持原生 2K / 4K。' },
   'hfsy-nano-banana-2': { label: 'Nano Banana 2 · 1K / 2K / 4K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 7, ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9','9:21','2:1','1:2'], resolutions: ['1K','2K','4K'], intro: 'HFSY · Nano Banana 2，支持多图参考。' },
   'hfsy-nano-banana-pro': { label: 'Nano Banana 2 Pro · 1K / 2K / 4K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 7, ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9','9:21','2:1','1:2'], resolutions: ['1K','2K','4K'], intro: 'HFSY · Nano Banana Pro，面向高质量商业图片。' },
+  'hfsy-sd-2-0': { label: 'SD 2.0 · 720P', group: 'HFSY API', provider: 'hfsy', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 9, maxVideos: 3, maxAudios: 3, promptLimit: 5000, ratios: ['16:9','9:16','21:9','4:3','1:1','3:4'], resolutions: ['720p'], duration: [15,14,13,12,11,10,9,8,7,6,5,4], intro: 'HFSY · SD 2.0（sd-2.0），720P，支持图片、视频与音频混合参考。' },
+  'hfsy-sd-2-5-720': { label: 'SD 2.5 · 720P', group: 'HFSY API', provider: 'hfsy', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 30, maxVideos: 10, maxAudios: 10, promptLimit: 5000, ratios: ['16:9','9:16','4:3','1:1','3:4'], resolutions: ['720p'], duration: [30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4], intro: 'HFSY · SD 2.5 720P（sd-2.5-720），支持图片、视频与音频混合参考。' },
   'seedance-reference-video-ark-direct': { label: 'Seedance · Reference Video · 720p', provider: 'ark', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 8, maxVideos: 8, maxAudios: 8, ratios: ['9:16','16:9','1:1'], resolutions: ['720p'], duration: [15,10,5], intro: '使用 Seedance 生成带音频的视频，支持图片、视频、音频参考。' }
 };
 
 function selectedModel() { return MODEL_CATALOG[profile.value]; }
+
+function loadTaskVideoPreview(video, source) {
+  if (!taskVideoPreviewObserver) { video.src = source; return; }
+  video.dataset.src = source;
+  taskVideoPreviewObserver.observe(video);
+}
+
+function loadLocalVideoPreview(video, source) {
+  if (!localVideoPreviewObserver) { video.src = source; return; }
+  video.dataset.src = source;
+  localVideoPreviewObserver.observe(video);
+}
 
 function renderUsage(usage) {
   document.querySelector('#usage-total').textContent = usage.total || 0;
@@ -70,7 +102,7 @@ function applySelectedModel() {
   document.querySelector('#dropzone').classList.remove('hidden');
   document.querySelector('#reference-preview').classList.remove('hidden');
   document.querySelector('#reference-hint').textContent = model.kind === 'video'
-    ? (model.provider === 'hfsy' ? '可选，图片最多 5 张＋音频最多 1 条' : '可选，支持图 / 视频 / 音频')
+    ? (model.provider === 'hfsy' ? `可选，图片最多 ${model.maxImages} 张＋视频最多 ${model.maxVideos} 条＋音频最多 ${model.maxAudios} 条` : '可选，支持图 / 视频 / 音频')
     : `可选，参考图最多 ${model.maxImages} 张`;
   state.files = state.files.filter(file => model.accept.split(',').some(pattern => file.type.startsWith(pattern.replace('/*', '/'))));
   renderReferences();
@@ -238,7 +270,7 @@ function renderInspirations() {
   }
   state.inspirations.forEach(item => {
     const card = document.createElement('article'); card.className = 'inspiration-card';
-    const video = document.createElement('video'); video.src = item.video_url; video.controls = true; video.preload = 'none';
+    const video = document.createElement('video'); video.controls = true; video.preload = 'metadata'; loadLocalVideoPreview(video, item.video_url);
     const body = document.createElement('div'); body.className = 'inspiration-body';
     const prompt = document.createElement('p'); prompt.textContent = item.prompt;
     const meta = document.createElement('small'); meta.textContent = `${item.ratio} · ${item.duration}s · ${item.references.length} 张参考图`;
@@ -246,8 +278,10 @@ function renderInspirations() {
     item.references.forEach((reference, index) => { const image = document.createElement('img'); image.src = reference.url; image.alt = `${index + 1}. ${reference.name}`; image.loading = 'lazy'; refs.append(image); });
     const actions = document.createElement('div'); actions.className = 'asset-actions';
     const restore = document.createElement('button'); restore.type = 'button'; restore.className = 'inspiration-restore'; restore.textContent = '一键复刻'; restore.addEventListener('click', () => restoreInspiration(item));
+    const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'copy-prompt'; copy.textContent = '复制 Prompt';
+    copy.addEventListener('click', () => copyPrompt(item.prompt, copy).catch(error => { document.querySelector('#inspiration-error').textContent = error.message || '复制失败'; }));
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'delete-action'; remove.textContent = '删除灵感'; remove.addEventListener('click', () => deleteInspiration(item).catch(error => { document.querySelector('#inspiration-error').textContent = error.message; }));
-    actions.append(restore, remove); body.append(prompt, meta, refs, actions); card.append(video, body); grid.append(card);
+    actions.append(restore, copy, remove); body.append(prompt, meta, refs, actions); card.append(video, body); grid.append(card);
   });
 }
 
@@ -307,6 +341,28 @@ function folderName(folderId) {
   return state.library.folders.find(folder => folder.id === folderId)?.name || '未知收藏夹';
 }
 
+function promptForAsset(asset) {
+  if (!asset.task_id) return '';
+  return String(state.tasks.find(task => task.id === asset.task_id)?.prompt || '');
+}
+
+async function copyPrompt(text, button) {
+  if (!text) return;
+  if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+  else {
+    const field = document.createElement('textarea');
+    field.value = text; field.setAttribute('readonly', ''); field.style.position = 'fixed'; field.style.opacity = '0';
+    document.body.append(field); field.select(); document.execCommand('copy'); field.remove();
+  }
+  const label = button.textContent;
+  button.textContent = '已复制 ✓';
+  window.setTimeout(() => { button.textContent = label; }, 1200);
+}
+
+function assetSignature(asset) {
+  return [asset.kind, asset.name, asset.url, asset.folder_id, asset.source, promptForAsset(asset)].join('|');
+}
+
 function openMoveDialog(asset) {
   const dialog = document.querySelector('#move-asset-dialog');
   const select = dialog.querySelector('#move-folder-select');
@@ -324,21 +380,34 @@ function openMoveDialog(asset) {
 
 function renderLibraryAssets() {
   const assets = visibleLibraryAssets();
-  assetGrid.replaceChildren();
+  const current = new Map([...assetGrid.querySelectorAll('[data-asset-id]')].map(card => [card.dataset.assetId, card]));
+  assetGrid.querySelector('.library-empty')?.remove();
   if (!assets.length) {
-    const empty = document.createElement('div'); empty.className = 'library-empty';
-    empty.innerHTML = '<span>◇</span><p>这个收藏夹还是空的</p><small>导入图片或视频，或从任务卡把成片放进来。</small>';
-    assetGrid.append(empty);
+    current.forEach(card => card.remove());
+    if (!assetGrid.querySelector('.library-empty')) {
+      const empty = document.createElement('div'); empty.className = 'library-empty';
+      empty.innerHTML = '<span>◇</span><p>这个收藏夹还是空的</p><small>导入图片或视频，或从任务卡把成片放进来。</small>';
+      assetGrid.append(empty);
+    }
     return;
   }
-  assets.forEach(asset => {
-    const card = document.createElement('article'); card.className = 'asset-card'; card.dataset.assetId = asset.id;
+  assets.forEach((asset, index) => {
+    const signature = assetSignature(asset);
+    let card = current.get(asset.id);
+    if (card?.dataset.signature === signature) {
+      const slot = assetGrid.children[index];
+      if (slot !== card) assetGrid.insertBefore(card, slot || null);
+      current.delete(asset.id);
+      return;
+    }
+    const nextCard = document.createElement('article'); nextCard.className = 'asset-card'; nextCard.dataset.assetId = asset.id; nextCard.dataset.signature = signature;
+    card ? card.replaceWith(nextCard) : assetGrid.append(nextCard);
+    card = nextCard;
     const frame = document.createElement('div'); frame.className = 'asset-media';
     const media = document.createElement(asset.kind === 'video' ? 'video' : 'img');
-    media.src = asset.url;
-    if (asset.kind === 'video') { media.controls = true; media.preload = 'none'; frame.append(media); }
+    if (asset.kind === 'video') { media.controls = true; media.preload = 'metadata'; loadLocalVideoPreview(media, asset.url); frame.append(media); }
     else {
-      media.alt = asset.name; media.loading = 'lazy';
+      media.src = asset.url; media.alt = asset.name; media.loading = 'lazy';
       const preview = document.createElement('button'); preview.type = 'button'; preview.title = '查看大图';
       preview.append(media); preview.addEventListener('click', () => showImagePreview(asset.url, asset.name)); frame.append(preview);
     }
@@ -346,6 +415,14 @@ function renderLibraryAssets() {
     const body = document.createElement('div'); body.className = 'asset-body';
     const title = document.createElement('p'); title.textContent = asset.name; title.title = asset.name;
     const meta = document.createElement('small'); meta.textContent = `${asset.source === 'generated' ? '生成成片' : '本地导入'} · ${folderName(asset.folder_id)}`;
+    const prompt = promptForAsset(asset);
+    let promptDetails = null;
+    if (prompt) {
+      promptDetails = document.createElement('details'); promptDetails.className = 'asset-prompt-details';
+      const summary = document.createElement('summary'); summary.textContent = '完整提示词';
+      const fullPrompt = document.createElement('p'); fullPrompt.className = 'asset-prompt-full'; fullPrompt.textContent = prompt;
+      promptDetails.append(summary, fullPrompt);
+    }
     const actions = document.createElement('div'); actions.className = 'asset-actions';
     const organize = document.createElement('button'); organize.type = 'button'; organize.textContent = asset.folder_id ? '更换收藏夹' : '放入收藏夹';
     organize.addEventListener('click', () => openMoveDialog(asset));
@@ -354,11 +431,20 @@ function renderLibraryAssets() {
       use.addEventListener('click', () => appendAssetToComposer(asset).catch(error => setLibraryError(error.message)));
       actions.append(use);
     }
+    if (prompt) {
+      const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'copy-prompt'; copy.textContent = '复制 Prompt';
+      copy.addEventListener('click', () => copyPrompt(prompt, copy).catch(error => setLibraryError(error.message || '复制失败')));
+      actions.append(copy);
+    }
     const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'delete-action'; remove.textContent = '移入回收站';
     remove.addEventListener('click', () => deleteLibraryAsset(asset).catch(error => setLibraryError(error.message)));
     actions.prepend(link('下载 ↘', asset.url), organize); actions.append(remove);
-    body.append(title, meta, actions); card.append(frame, body); assetGrid.append(card);
+    body.append(title, meta); if (promptDetails) body.append(promptDetails); body.append(actions); card.append(frame, body);
+    const slot = assetGrid.children[index];
+    if (slot !== card) assetGrid.insertBefore(card, slot || null);
+    current.delete(asset.id);
   });
+  current.forEach(card => card.remove());
 }
 
 async function appendAssetToComposer(asset) {
@@ -458,7 +544,8 @@ function taskCard(task) {
     openPreview.append(image); openPreview.addEventListener('click', () => showImagePreview(imageUrl, task.prompt));
     frame.querySelector('.placeholder').replaceWith(openPreview);
   } else if (task.status === 'completed' && task.kind === 'video' && (task.local_video_url || task.video_url)) {
-    const video = document.createElement('video'); video.src = task.local_video_url || task.video_url; video.controls = true; video.preload = 'none'; frame.querySelector('.placeholder').replaceWith(video);
+    const video = document.createElement('video'); video.controls = true; video.preload = 'metadata'; frame.querySelector('.placeholder').replaceWith(video);
+    loadTaskVideoPreview(video, task.local_video_url || task.video_url);
   } else if (task.status === 'failed') {
     frame.querySelector('.placeholder-mark').textContent = '!';
   }
@@ -521,6 +608,7 @@ async function loadTasks() {
     const response = await fetch('/api/tasks'); const payload = await response.json();
     const tasks = payload.tasks.filter(task => task.status !== 'failed' || task.history_version >= 2);
     state.tasks = tasks;
+    if (activeFolderId()) renderLibraryAssets();
     const workspaceTasks = state.workspaceId === 'tasks' ? tasks : tasks.filter(task => task.folder_id === activeFolderId());
     updateQueueOverview(workspaceTasks);
     const activeCount = workspaceTasks.filter(task => ['queued', 'running'].includes(task.status)).length;

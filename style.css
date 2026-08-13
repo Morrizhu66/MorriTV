@@ -62,13 +62,14 @@ form { max-width:610px; }.field { margin-top:24px; }.field label { display:block
 .card-meta { min-width:0; font:9px 'DM Mono',monospace; text-transform:uppercase; letter-spacing:.015em; }
 .task-kind { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); }
 .task-prompt { min-height:46px; margin:8px 0 0; overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; font-size:11px; line-height:1.45; }
-.task-prompt-details,.task-error-details { margin-top:9px; border-top:1px solid rgba(22,22,22,.13); padding-top:8px; }
-.task-prompt-details summary,.task-error-details summary { display:flex; align-items:center; justify-content:space-between; list-style:none; color:var(--muted); cursor:pointer; font:9px 'DM Mono',monospace; }
-.task-prompt-details summary::-webkit-details-marker,.task-error-details summary::-webkit-details-marker { display:none; }
-.task-prompt-details summary::after,.task-error-details summary::after { content:'↘'; color:var(--orange); font-size:13px; transition:transform .16s ease; }
-.task-prompt-details[open] summary::after,.task-error-details[open] summary::after { transform:rotate(180deg); }
+.task-prompt-details,.task-error-details,.asset-prompt-details { margin-top:9px; border-top:1px solid rgba(22,22,22,.13); padding-top:8px; }
+.task-prompt-details summary,.task-error-details summary,.asset-prompt-details summary { display:flex; align-items:center; justify-content:space-between; list-style:none; color:var(--muted); cursor:pointer; font:9px 'DM Mono',monospace; }
+.task-prompt-details summary::-webkit-details-marker,.task-error-details summary::-webkit-details-marker,.asset-prompt-details summary::-webkit-details-marker { display:none; }
+.task-prompt-details summary::after,.task-error-details summary::after,.asset-prompt-details summary::after { content:'↘'; color:var(--orange); font-size:13px; transition:transform .16s ease; }
+.task-prompt-details[open] summary::after,.task-error-details[open] summary::after,.asset-prompt-details[open] summary::after { transform:rotate(180deg); }
 .task-prompt-full,.error-detail { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 1px; padding:9px 10px; background:rgba(255,255,255,.38); font:10px/1.55 'DM Mono',monospace; color:#494640; }
-.task-prompt-full { border-left:2px solid var(--orange); }.task-error-details summary { color:#9e321b; }.error-detail { border-left:2px solid #b33b21; color:#8c2b17; }
+.asset-prompt-full { white-space:pre-wrap; overflow-wrap:anywhere; margin:8px 0 1px; padding:9px 10px; background:rgba(255,255,255,.38); font:10px/1.55 'DM Mono',monospace; color:#494640; }
+.task-prompt-full,.asset-prompt-full { border-left:2px solid var(--orange); }.task-error-details summary { color:#9e321b; }.error-detail { border-left:2px solid #b33b21; color:#8c2b17; }
 .card-actions { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-top:auto; padding-top:13px; }
 .card-actions a,.card-actions button { min-height:31px; display:inline-flex; align-items:center; justify-content:center; padding:0 10px; border:1px solid rgba(22,22,22,.22); background:transparent; color:var(--ink); font:9px 'DM Mono',monospace; cursor:pointer; text-decoration:none; transition:background .15s,color .15s,border-color .15s; }
 .card-actions .download-action { background:var(--ink); border-color:var(--ink); color:var(--paper); }.card-actions .download-action:hover { background:var(--orange); border-color:var(--orange); }.card-actions .retry-action:hover { background:var(--paper); border-color:var(--ink); }

@@ -30,6 +30,19 @@ MODEL_SPECS: dict[str, dict[str, Any]] = {
         "model": "nano-banana-pro", "kind": "image", "family": "nano", "max_images": 7,
         "resolutions": ("1K", "2K", "4K"),
     },
+    "hfsy-sd-2-0": {
+        "model": "sd-2.0", "kind": "video", "family": "video", "max_images": 9,
+        "max_videos": 3, "max_audios": 3, "resolutions": ("720p",),
+        "ratios": ("16:9", "9:16", "21:9", "4:3", "1:1", "3:4"),
+        "min_duration": 4, "max_duration": 15, "prompt_limit": 5000,
+        "audio_requires_visual": True,
+    },
+    "hfsy-sd-2-5-720": {
+        "model": "sd-2.5-720", "kind": "video", "family": "video", "max_images": 30,
+        "max_videos": 10, "max_audios": 10, "resolutions": ("720p",),
+        "ratios": ("16:9", "9:16", "4:3", "1:1", "3:4"),
+        "min_duration": 4, "max_duration": 30, "prompt_limit": 5000,
+    },
 }
 
 GPT_SIZES = {
@@ -63,12 +76,16 @@ def build_generation_request(
     spec = MODEL_SPECS[profile]
     model = spec["model"]
     images = [url for url, mime in references if mime.startswith("image/")]
+    videos = [url for url, mime in references if mime.startswith("video/")]
+    audios = [url for url, mime in references if mime.startswith("audio/")]
 
     if len(images) > spec["max_images"]:
         raise ValueError(f"{model} 最多支持 {spec['max_images']} 张参考图")
     if resolution not in spec["resolutions"]:
         if model == "gpt-image-2":
             raise ValueError("GPT Image 2 仅支持 1K")
+        if spec["family"] == "video":
+            raise ValueError(f"{model} 仅支持 720p")
         raise ValueError(f"{model} 不支持清晰度 {resolution}")
 
     if spec["family"] == "gpt":
@@ -92,6 +109,38 @@ def build_generation_request(
         return f"/v1beta/models/{model}:generateContent", {
             "contents": [{"parts": parts}],
             "generationConfig": {"imageConfig": {"imageSize": resolution, "aspectRatio": ratio}},
+        }
+
+    if spec["family"] == "video":
+        duration_range = f"{spec['min_duration']} 到 {spec['max_duration']} 秒"
+        try:
+            duration_value = int(duration)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{model} 时长必须是 {duration_range}的整数") from exc
+        if not spec["min_duration"] <= duration_value <= spec["max_duration"]:
+            raise ValueError(f"{model} 时长必须是 {duration_range}的整数")
+        if len(prompt) > spec["prompt_limit"]:
+            raise ValueError(f"{model} 提示词不能超过 {spec['prompt_limit']} 字")
+        if ratio not in spec["ratios"]:
+            raise ValueError(f"{model} 不支持画幅 {ratio}")
+        if len(videos) > spec["max_videos"]:
+            raise ValueError(f"{model} 最多支持 {spec['max_videos']} 条参考视频")
+        if len(audios) > spec["max_audios"]:
+            raise ValueError(f"{model} 最多支持 {spec['max_audios']} 条参考音频")
+        if spec.get("audio_requires_visual") and audios and not (images or videos):
+            raise ValueError(f"{model} 使用音频时必须同时提供图片或视频素材")
+        orientation = "portrait" if ratio in {"9:16", "3:4"} else "landscape"
+        return "/v1/video/create", {
+            "model": model,
+            "orientation": orientation,
+            "ratio": ratio,
+            "prompt": prompt,
+            "images": images,
+            "videos": videos,
+            "audios": audios,
+            "duration": duration_value,
+            "size": "large",
+            "watermark": False,
         }
 
     raise ValueError("不支持的 HFSY 模型")

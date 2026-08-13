@@ -54,9 +54,32 @@ class MediaLibraryFrontendTests(unittest.TestCase):
         self.assertIn(".asset-card", self.css)
         self.assertIn("@media (max-width:760px)", self.css)
 
-    def test_large_video_collections_do_not_preload_every_local_file(self):
-        self.assertNotIn("preload = 'metadata'", self.js)
-        self.assertIn("preload = 'none'", self.js)
+    def test_collection_video_previews_load_metadata_only_near_the_viewport(self):
+        render_assets = self.js[
+            self.js.index("function renderLibraryAssets()"):
+            self.js.index("async function appendAssetToComposer(asset)")
+        ]
+
+        self.assertIn("function loadLocalVideoPreview(video, source)", self.js)
+        self.assertIn("media.preload = 'metadata'", render_assets)
+        self.assertIn("loadLocalVideoPreview(media, asset.url);", render_assets)
+
+    def test_collection_polling_keeps_playing_video_nodes_mounted(self):
+        render_assets = self.js[
+            self.js.index("function renderLibraryAssets()"):
+            self.js.index("async function appendAssetToComposer(asset)")
+        ]
+
+        self.assertNotIn("assetGrid.replaceChildren();", render_assets)
+        self.assertIn("new Map([...assetGrid.querySelectorAll('[data-asset-id]')]", render_assets)
+        self.assertIn("assetGrid.insertBefore(card, slot || null);", render_assets)
+
+    def test_generated_collection_assets_expose_and_copy_the_full_prompt(self):
+        self.assertIn("function promptForAsset(asset)", self.js)
+        self.assertIn("async function copyPrompt(text, button)", self.js)
+        self.assertIn("asset-prompt-details", self.js)
+        self.assertIn("复制 Prompt", self.js)
+        self.assertIn(".asset-prompt-details", self.css)
 
     def test_generation_submission_targets_the_active_collection(self):
         self.assertIn("function activeFolderId()", self.js)

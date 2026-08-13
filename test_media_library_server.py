@@ -157,6 +157,34 @@ class MediaLibraryServerTests(unittest.TestCase):
         self.assertEqual(deleted["deleted_asset"]["id"], asset["id"])
         self.assertTrue(any(path.is_file() for path in server.TRASH_DIR.rglob("unused.png")))
 
+    def test_media_range_request_returns_only_the_requested_bytes(self):
+        media = server.RESULTS_DIR / "seekable.mp4"
+        media.write_bytes(b"0123456789")
+
+        response = urlopen(Request(
+            self.base_url + "/media/results/seekable.mp4",
+            headers={"Range": "bytes=3-6"},
+        ), timeout=4)
+
+        self.assertEqual(response.status, 206)
+        self.assertEqual(response.headers["Accept-Ranges"], "bytes")
+        self.assertEqual(response.headers["Content-Range"], "bytes 3-6/10")
+        self.assertEqual(response.headers["Content-Length"], "4")
+        self.assertEqual(response.read(), b"3456")
+
+    def test_media_unsatisfied_range_returns_416_with_total_size(self):
+        media = server.RESULTS_DIR / "seekable.mp4"
+        media.write_bytes(b"0123456789")
+
+        with self.assertRaises(HTTPError) as raised:
+            urlopen(Request(
+                self.base_url + "/media/results/seekable.mp4",
+                headers={"Range": "bytes=20-30"},
+            ), timeout=4)
+
+        self.assertEqual(raised.exception.code, 416)
+        self.assertEqual(raised.exception.headers["Content-Range"], "bytes */10")
+
 
 if __name__ == "__main__":
     unittest.main()

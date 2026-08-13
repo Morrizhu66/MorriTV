@@ -40,6 +40,28 @@ class HfsyServerIntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "图片模型"):
             server.validate_task_input("video", "hfsy-gpt-image-2", "x", "1:1", "10", "1K", [])
 
+    def test_accepts_hfsy_sd25_720_as_an_independent_video_task(self):
+        with patch.object(server.VIDEO_EXECUTOR, "submit") as submit:
+            video = server.create_tasks(Fields({
+                "kind": "video", "profile": "hfsy-sd-2-5-720", "prompts": "fight",
+                "ratio": "16:9", "duration": "15", "resolution": "720p",
+            }))[0]
+
+        self.assertEqual(video["provider"], "hfsy")
+        self.assertEqual(video["profile"], "hfsy-sd-2-5-720")
+        self.assertEqual(submit.call_count, 1)
+
+    def test_accepts_hfsy_sd2_720_as_an_independent_video_task(self):
+        with patch.object(server.VIDEO_EXECUTOR, "submit") as submit:
+            video = server.create_tasks(Fields({
+                "kind": "video", "profile": "hfsy-sd-2-0", "prompts": "fight",
+                "ratio": "16:9", "duration": "15", "resolution": "720p",
+            }))[0]
+
+        self.assertEqual(video["provider"], "hfsy")
+        self.assertEqual(video["profile"], "hfsy-sd-2-0")
+        self.assertEqual(submit.call_count, 1)
+
     def test_hfsy_task_uses_only_hfsy_key_and_does_not_start_ark_subprocess(self):
         task = {
             "id": "hfsy-task", "kind": "image", "provider": "hfsy", "profile": "hfsy-gpt-image-2",
@@ -106,6 +128,28 @@ class HfsyServerIntegrationTests(unittest.TestCase):
         self.assertEqual(generate.call_args.kwargs["references"], [hosted])
         cleanup.assert_called_once_with([hosted], server.private_env_value)
         self.assertEqual(result["result_url"], "https://cdn.example/result.png")
+
+    def test_hfsy_video_result_is_downloaded_and_registered_locally(self):
+        task = {
+            "id": "hfsy-video", "kind": "video", "provider": "hfsy", "profile": "hfsy-sd-2-5-720",
+            "prompt": "fight", "status": "queued", "created_at": 1.0, "started_at": None,
+            "finished_at": None, "reference_files": [], "ratio": "16:9", "duration": "15",
+            "resolution": "720p", "image_url": "", "local_image_url": "", "video_url": "",
+            "local_video_url": "", "error": "", "queue_position": 1, "folder_id": "",
+        }
+        server.TASKS[task["id"]] = task
+        with patch.object(server, "private_env_value", side_effect=lambda key: "hfsy-secret" if key == "HFSY_API_KEY" else ""):
+            with patch.object(server, "run_hfsy_generation", return_value={"result_url": "https://cdn.example/result.mp4"}):
+                with patch.object(server, "download_video_result", return_value="/media/results/hfsy-video.mp4") as download:
+                    with patch.object(server, "register_completed_task") as register:
+                        with patch.object(server.subprocess, "run") as ark_run:
+                            server.run_task(task["id"])
+
+        download.assert_called_once_with("https://cdn.example/result.mp4", "hfsy-video", "")
+        ark_run.assert_not_called()
+        register.assert_called_once_with(task)
+        self.assertEqual(task["status"], "completed")
+        self.assertEqual(task["local_video_url"], "/media/results/hfsy-video.mp4")
 
 
 if __name__ == "__main__":

@@ -35,6 +35,25 @@ class InspirationFrontendTests(unittest.TestCase):
         self.assertIn("asset.kind === 'image'", self.js)
         self.assertIn("填入输入框", self.js)
 
+    def test_inspiration_prompt_has_a_one_click_copy_action(self):
+        render = self.js[
+            self.js.index("function renderInspirations()"):
+            self.js.index("function activeFolderId()")
+        ]
+
+        self.assertIn("copy.className = 'copy-prompt'", render)
+        self.assertIn("copy.textContent = '复制 Prompt'", render)
+        self.assertIn("copyPrompt(item.prompt, copy)", render)
+
+    def test_inspiration_video_previews_load_metadata_only_near_the_viewport(self):
+        render = self.js[
+            self.js.index("function renderInspirations()"):
+            self.js.index("function activeFolderId()")
+        ]
+
+        self.assertIn("video.preload = 'metadata'", render)
+        self.assertIn("loadLocalVideoPreview(video, item.video_url);", render)
+
 
 if __name__ == "__main__":
     unittest.main()

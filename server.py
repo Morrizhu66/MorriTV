@@ -630,6 +630,23 @@ def download_image_result(image_url: str, task_id: str, folder_id: str = "") -> 
     return workspace_media_url(folder_id, "results", target.name)
 
 
+def download_video_result(video_url: str, task_id: str, folder_id: str = "") -> str:
+    """Download one generated video and return its local seekable media URL."""
+    with urlopen(video_url, timeout=600) as response:
+        content_type = response.headers.get_content_type()
+        suffix = Path(urlparse(video_url).path).suffix.lower()
+        if suffix not in {".mp4", ".mov", ".webm"}:
+            suffix = mimetypes.guess_extension(content_type) or ".mp4"
+        directory = workspace_result_dir(folder_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / f"{task_id}{suffix}"
+        temporary = target.with_suffix(target.suffix + ".part")
+        with temporary.open("wb") as output:
+            shutil.copyfileobj(response, output)
+        temporary.replace(target)
+    return workspace_media_url(folder_id, "results", target.name)
+
+
 def run_hfsy_generation(task: dict[str, Any], api_key: str) -> dict[str, str]:
     prepared: list[dict[str, str]] = []
     hosted: list[dict[str, str]] = []
@@ -698,15 +715,21 @@ def run_task(task_id: str) -> None:
             image_url = str(result.get("image_url") or "")
             video_url = str(result.get("video_url") or "")
         local_image_url = ""
+        local_video_url = ""
         if task["kind"] == "image":
             if not image_url:
                 raise RuntimeError("模型未返回图片地址")
             local_image_url = download_image_result(image_url, task_id, str(task.get("folder_id") or ""))
+        elif task.get("provider") == "hfsy":
+            if not video_url:
+                raise RuntimeError("模型未返回视频地址")
+            local_video_url = download_video_result(video_url, task_id, str(task.get("folder_id") or ""))
         with LOCK:
             task["status"] = "completed"
             task["image_url"] = image_url
             task["local_image_url"] = local_image_url
             task["video_url"] = video_url
+            task["local_video_url"] = local_video_url
             output_file = result.get("output_file")
             if output_file and Path(output_file).exists():
                 task["local_video_url"] = workspace_media_url(str(task.get("folder_id") or ""), "results", Path(output_file).name)
@@ -727,6 +750,32 @@ def run_task(task_id: str) -> None:
             task["finished_at"] = now()
             record_task_event("failed", task)
             print(f"[{time.strftime('%H:%M:%S')}] task {task_id} failed: {task['error']}")
+
+
+def parse_byte_range(header: str, size: int) -> tuple[int, int] | None:
+    if not header:
+        return None
+    if not header.startswith("bytes=") or "," in header:
+        raise ValueError("unsupported range")
+    bounds = header.removeprefix("bytes=").strip()
+    if "-" not in bounds:
+        raise ValueError("invalid range")
+    raw_start, raw_end = bounds.split("-", 1)
+    if size <= 0:
+        raise ValueError("empty file")
+    if not raw_start:
+        suffix = int(raw_end)
+        if suffix <= 0:
+            raise ValueError("invalid suffix")
+        start = max(0, size - suffix)
+        end = size - 1
+    else:
+        start = int(raw_start)
+        end = int(raw_end) if raw_end else size - 1
+        if start < 0 or start >= size or end < start:
+            raise ValueError("unsatisfied range")
+        end = min(end, size - 1)
+    return start, end
 
 
 class StudioHandler(SimpleHTTPRequestHandler):
@@ -803,12 +852,37 @@ class StudioHandler(SimpleHTTPRequestHandler):
         if not target.is_file():
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        self.send_response(HTTPStatus.OK)
+        size = target.stat().st_size
+        try:
+            byte_range = parse_byte_range(self.headers.get("Range", ""), size)
+        except (TypeError, ValueError):
+            self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        start, end = byte_range or (0, max(0, size - 1))
+        content_length = end - start + 1 if size else 0
+        self.send_response(HTTPStatus.PARTIAL_CONTENT if byte_range else HTTPStatus.OK)
         self.send_header("Content-Type", mimetypes.guess_type(target.name)[0] or "application/octet-stream")
-        self.send_header("Content-Length", str(target.stat().st_size))
+        self.send_header("Accept-Ranges", "bytes")
+        if byte_range:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Content-Length", str(content_length))
         self.end_headers()
         with target.open("rb") as file:
-            shutil.copyfileobj(file, self.wfile)
+            file.seek(start)
+            remaining = content_length
+            try:
+                while remaining:
+                    chunk = file.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path

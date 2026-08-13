@@ -11,14 +11,24 @@ class HfsyFrontendContractTests(unittest.TestCase):
         cls.js = (ROOT / "app.js").read_text(encoding="utf-8")
         cls.html = (ROOT / "index.html").read_text(encoding="utf-8")
 
-    def test_catalog_exposes_all_confirmed_hfsy_options_and_no_sd_25(self):
+    def test_catalog_exposes_all_confirmed_hfsy_options_and_both_sd_720p_models(self):
         for profile in (
             "hfsy-gpt-image-2", "hfsy-gpt-image-2pro", "hfsy-nano-banana-2",
-            "hfsy-nano-banana-pro",
+            "hfsy-nano-banana-pro", "hfsy-sd-2-0", "hfsy-sd-2-5-720",
         ):
             self.assertIn(profile, self.js)
         self.assertNotIn("hfsy-minimax-h3", self.js)
-        self.assertNotIn("sd-2.5", self.js + self.html)
+        self.assertIn("sd-2.5-720", self.js)
+        self.assertNotIn("'hfsy-sd-2': {", self.js)
+        self.assertIn("'hfsy-sd-2-0': { label: 'SD 2.0 · 720P'", self.js)
+        self.assertIn("SD 2.5 · 720P", self.js)
+        self.assertIn("promptLimit: 5000", self.js)
+        self.assertIn("maxImages: 30", self.js)
+        self.assertIn("maxVideos: 10", self.js)
+        self.assertIn("maxAudios: 10", self.js)
+        self.assertIn("duration: [30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4]", self.js)
+        self.assertIn("duration: [15,14,13,12,11,10,9,8,7,6,5,4]", self.js)
+        self.assertIn("maxImages: 9, maxVideos: 3, maxAudios: 3", self.js)
         self.assertIn("HFSY API", self.js)
 
     def test_model_change_applies_dynamic_ratio_resolution_duration_and_material_limits(self):
