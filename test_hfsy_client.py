@@ -270,7 +270,7 @@ class HfsyClientContractTests(unittest.TestCase):
         self.assertEqual(request.call_args.args[1]["reference_images"], ["https://cdn.example/reference.png"])
         self.assertEqual(result["result_url"], "https://cdn.example/result.png")
 
-    def test_generate_retries_one_transient_reference_fetch_failure(self):
+    def test_generate_does_not_retry_transient_reference_fetch_failure(self):
         from hfsy_client import generate
 
         responses = [
@@ -278,16 +278,16 @@ class HfsyClientContractTests(unittest.TestCase):
             {"data": [{"url": "https://cdn.example/result.png"}]},
         ]
         with patch("hfsy_client.request_json", side_effect=responses) as request:
-            result = generate(
-                "hfsy-nano-banana-pro", "edit", "1:1", "1K",
-                [{"url": "https://tos.example/ref.jpg", "mime": "image/jpeg"}],
-                "10", "secret", sleep=lambda _: None,
-            )
+            with self.assertRaisesRegex(RuntimeError, "context deadline exceeded"):
+                generate(
+                    "hfsy-nano-banana-pro", "edit", "1:1", "1K",
+                    [{"url": "https://tos.example/ref.jpg", "mime": "image/jpeg"}],
+                    "10", "secret", sleep=lambda _: None,
+                )
 
-        self.assertEqual(request.call_count, 2)
-        self.assertEqual(result["result_url"], "https://cdn.example/result.png")
+        self.assertEqual(request.call_count, 1)
 
-    def test_generate_retries_one_transient_gateway_502(self):
+    def test_generate_does_not_retry_transient_gateway_502(self):
         from hfsy_client import generate
 
         responses = [
@@ -295,16 +295,16 @@ class HfsyClientContractTests(unittest.TestCase):
             {"data": [{"url": "https://cdn.example/result.png"}]},
         ]
         with patch("hfsy_client.request_json", side_effect=responses) as request:
-            result = generate(
-                "hfsy-gpt-image-2pro", "edit", "9:16", "4K",
-                [{"url": "https://tos.example/ref.jpg", "mime": "image/jpeg"}],
-                "10", "secret", sleep=lambda _: None,
-            )
+            with self.assertRaisesRegex(RuntimeError, "HFSY HTTP 502"):
+                generate(
+                    "hfsy-gpt-image-2pro", "edit", "9:16", "4K",
+                    [{"url": "https://tos.example/ref.jpg", "mime": "image/jpeg"}],
+                    "10", "secret", sleep=lambda _: None,
+                )
 
-        self.assertEqual(request.call_count, 2)
-        self.assertEqual(result["result_url"], "https://cdn.example/result.png")
+        self.assertEqual(request.call_count, 1)
 
-    def test_generate_retries_one_sd25_task_that_fails_with_upstream_eof(self):
+    def test_generate_does_not_resubmit_sd25_task_that_fails_with_upstream_eof(self):
         from hfsy_client import generate
 
         responses = [
@@ -318,16 +318,13 @@ class HfsyClientContractTests(unittest.TestCase):
             },
         ]
         with patch("hfsy_client.request_json", side_effect=responses) as request:
-            result = generate(
-                "hfsy-sd-2-5-720", "fight", "16:9", "720p", [], "10", "secret",
-                sleep=lambda _: None,
-            )
+            with self.assertRaisesRegex(RuntimeError, "EOF"):
+                generate(
+                    "hfsy-sd-2-5-720", "fight", "16:9", "720p", [], "10", "secret",
+                    sleep=lambda _: None,
+                )
 
-        self.assertEqual(request.call_count, 4)
-        self.assertEqual(result, {
-            "result_url": "https://cdn.example/result.mp4",
-            "task_id": "video-second",
-        })
+        self.assertEqual(request.call_count, 2)
 
     def test_generate_does_not_retry_non_transient_bad_request(self):
         from hfsy_client import generate

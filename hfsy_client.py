@@ -215,10 +215,6 @@ def _query_endpoint(profile: str, task_id: str) -> str:
     return f"/v1/images/generations/{quote(task_id)}"
 
 
-def _is_transient_sd25_task_eof(profile: str, message: str) -> bool:
-    return MODEL_SPECS[profile]["model"].startswith("sd-2.5-") and "eof" in message.lower()
-
-
 def generate(
     profile: str,
     prompt: str,
@@ -241,39 +237,19 @@ def generate(
             raise ValueError("HFSY 参考素材必须是公网 URL，不支持直接上传本地文件")
 
     endpoint, payload = build_generation_request(profile, prompt, ratio, resolution, uploaded, duration)
-    for generation_attempt in range(2):
-        try:
-            initial_response = request_json(endpoint, payload, api_key)
-        except RuntimeError as exc:
-            message = str(exc).lower()
-            transient = (
-                "http 502" in message
-                or "http 504" in message
-                or "failed to load filedata" in message
-                or "context deadline exceeded" in message
-            )
-            if not transient:
-                raise
-            sleep(1)
-            initial_response = request_json(endpoint, payload, api_key)
-        parsed = parse_generation_response(initial_response)
-        for _ in range(640):
-            if parsed["status"] == "SUCCESS":
-                if not parsed["result_url"]:
-                    raise RuntimeError("HFSY 任务成功但未返回结果 URL")
-                return {"result_url": parsed["result_url"], "task_id": parsed["task_id"]}
-            if parsed["status"] == "FAILURE":
-                error = parsed["error"] or "HFSY 生成失败"
-                if generation_attempt == 0 and _is_transient_sd25_task_eof(profile, error):
-                    sleep(1)
-                    break
-                raise RuntimeError(error)
-            if not parsed["task_id"]:
-                raise RuntimeError(parsed["error"] or "HFSY 未返回可轮询的任务 ID")
-            sleep(3)
-            parsed = parse_generation_response(
-                request_json(_query_endpoint(profile, parsed["task_id"]), None, api_key, method="GET")
-            )
-        else:
-            raise RuntimeError("HFSY 任务轮询超时")
-    raise RuntimeError("HFSY 生成失败")
+    initial_response = request_json(endpoint, payload, api_key)
+    parsed = parse_generation_response(initial_response)
+    for _ in range(640):
+        if parsed["status"] == "SUCCESS":
+            if not parsed["result_url"]:
+                raise RuntimeError("HFSY 任务成功但未返回结果 URL")
+            return {"result_url": parsed["result_url"], "task_id": parsed["task_id"]}
+        if parsed["status"] == "FAILURE":
+            raise RuntimeError(parsed["error"] or "HFSY 生成失败")
+        if not parsed["task_id"]:
+            raise RuntimeError(parsed["error"] or "HFSY 未返回可轮询的任务 ID")
+        sleep(3)
+        parsed = parse_generation_response(
+            request_json(_query_endpoint(profile, parsed["task_id"]), None, api_key, method="GET")
+        )
+    raise RuntimeError("HFSY 任务轮询超时")
