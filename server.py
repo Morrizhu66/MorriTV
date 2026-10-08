@@ -612,7 +612,7 @@ def copy_references(task_id: str, fields: cgi.FieldStorage, folder_id: str = "")
         target = destination / f"{len(copied) + 1:02d}-{filename}"
         with target.open("wb") as output:
             shutil.copyfileobj(item.file, output)
-        mime = (cloud_info.get("thumbnail_mime", "image/png") if cloud_info else mimetypes.guess_type(target.name)[0] or "application/octet-stream")
+        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         copied.append({"name": original, "path": str(target), "mime": mime})
     return copied
 

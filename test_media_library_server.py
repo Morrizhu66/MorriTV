@@ -66,6 +66,30 @@ class MediaLibraryServerTests(unittest.TestCase):
             response = exc
         return response.status, json.loads(response.read().decode("utf-8"))
 
+    def test_multipart_generation_with_reference_images_in_default_and_collection(self):
+        from unittest.mock import patch
+        folder = server.MEDIA_LIBRARY.create_folder("参考图测试")
+        for folder_id in ("", folder["id"]):
+            with self.subTest(folder_id=folder_id):
+                boundary = "studio-reference-regression"
+                body = bytearray()
+                for name, value in {"kind": "image", "profile": "seedream50-pro-ark-direct", "prompts": "short hair", "folder_id": folder_id}.items():
+                    body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
+                for filename, mime, content in (("ref.png", "image/png", b"png-reference"), ("ref.jpg", "image/jpeg", b"jpeg-reference")):
+                    body.extend(f'--{boundary}\r\nContent-Disposition: form-data; name="references"; filename="{filename}"\r\nContent-Type: {mime}\r\n\r\n'.encode())
+                    body.extend(content + b"\r\n")
+                body.extend(f'--{boundary}--\r\n'.encode())
+                with patch.object(server.IMAGE_EXECUTOR, "submit") as submit:
+                    status, payload = self.request_json("/api/tasks", method="POST", payload=bytes(body), content_type=f"multipart/form-data; boundary={boundary}")
+                self.assertEqual(status, 202, payload)
+                submit.assert_called_once()
+                task = payload["tasks"][0]
+                self.assertEqual(task["folder_id"], folder_id)
+                self.assertEqual([ref["mime"] for ref in task["reference_files"]], ["image/png", "image/jpeg"])
+                for reference, expected in zip(task["reference_files"], (b"png-reference", b"jpeg-reference")):
+                    with urlopen(self.base_url + reference["url"]) as response:
+                        self.assertEqual(response.read(), expected)
+
     def test_cloud_original_and_thumbnail_remain_usable_through_trash_restore(self):
         import io
         from PIL import Image
