@@ -116,3 +116,17 @@ class InspirationLibrary:
             self._data["items"] = [entry for entry in self._data["items"] if entry.get("id") != item_id]
             self._write()
             return {"item": dict(item), "trash_path": str(target)}
+
+    def restore(self, item: dict[str, Any], bundle: Path) -> None:
+        with self._lock:
+            target = self.storage / item["id"]
+            if target.exists() or any(entry["id"] == item["id"] for entry in self._data["items"]):
+                raise ValueError("视频灵感已存在")
+            bundle.replace(target)
+            self._data["items"].append(dict(item))
+            try:
+                self._write()
+            except Exception:
+                self._data["items"].pop()
+                target.replace(bundle)
+                raise

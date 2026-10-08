@@ -8,6 +8,7 @@
   </head>
   <body>
     <div class="grain"></div>
+    <div id="studio-toast" class="studio-toast hidden" role="status" aria-live="polite"></div>
     <header class="topbar">
       <a class="brand" href="/" aria-label="Model Studio 首页"><span class="brand-mark">M</span><span>MODEL<br />STUDIO</span></a>
       <div class="system-status"><span class="pulse"></span><span id="health-text">正在检查本机模型配置</span></div>
@@ -18,7 +19,7 @@
           <div id="usage-list"></div>
         </section>
       </div>
-      <div class="topbar-note">LOCAL ONLY · v1.0</div>
+      <div class="topbar-note">MODEL STUDIO · v1.1</div>
     </header>
 
     <main class="studio-shell">
@@ -81,6 +82,17 @@
             <button class="refresh" id="refresh-button" type="button" aria-label="刷新成片区">刷新 <span aria-hidden="true">↻</span></button>
           </div>
         </div>
+        <div class="storage-toolbar"><span id="storage-status">正在读取云存储状态</span><button id="sync-storage" type="button" disabled>同步已有原图</button></div>
+        <div class="selection-toolbar" aria-label="批量操作">
+          <span id="selection-count" aria-live="polite">选择卡片，批量整理</span>
+          <button id="select-all" type="button">全选当前列表</button>
+          <button id="clear-selection" type="button" disabled>取消选择</button>
+          <button id="batch-action" type="button" disabled>移入回收站</button>
+        </div>
+        <section id="trash-view" class="hidden" role="tabpanel" aria-label="回收站">
+          <p class="trash-intro">删除后可在这里恢复。原收藏夹已删除时，素材恢复到成片区。</p>
+          <div id="trash-grid" class="asset-grid"></div>
+        </section>
         <div id="task-view" role="tabpanel">
           <div class="queue-overview" id="queue-overview" role="status" aria-live="polite" aria-label="任务状态概览">
             <div class="queue-stat total"><strong id="count-total">0</strong><span>全部</span></div>
@@ -92,6 +104,7 @@
             <div class="empty"><span>◌</span><p>还没有任务</p><small>从左侧输入提示词，第一张成片会出现在这里。</small></div>
           </div>
         </div>
+        <button id="show-more" class="show-more hidden" type="button">显示更多</button>
         <section id="inspiration-view" class="inspiration-view hidden" role="tabpanel" aria-label="视频 Prompt 灵感库">
           <div class="inspiration-intro"><span class="section-kicker">VIDEO PROMPT ARCHIVE</span><h3>视频 Prompt 灵感库</h3><p>保存值得复用的视频、Prompt 与有序参考图。</p></div>
           <p id="inspiration-error" class="library-error" role="alert"></p>
@@ -140,6 +153,7 @@
     <dialog id="image-preview-dialog" class="image-preview-dialog" aria-label="生成图片大图预览">
       <button type="button" class="close-preview" data-close-preview aria-label="关闭大图预览">×</button>
       <img alt="" />
+      <button id="preview-copy" class="preview-copy" type="button">复制图片</button>
       <p class="preview-caption"></p>
     </dialog>
     <dialog id="folder-dialog" class="library-dialog" aria-labelledby="folder-dialog-title">

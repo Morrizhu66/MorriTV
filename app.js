@@ -1,6 +1,6 @@
 const state = {
   kind: 'image', files: [], timer: null, workspaceId: 'tasks', tasks: [],
-  library: { folders: [], assets: [] }, inspirations: []
+  library: { folders: [], assets: [] }, inspirations: [], trash: [], selected: new Set(), batchBusy: false, visibleLimit: 48
 };
 const form = document.querySelector('#generation-form');
 const prompts = document.querySelector('#prompts');
@@ -259,8 +259,7 @@ async function restoreInspiration(item) {
 }
 
 async function deleteInspiration(item) {
-  if (!window.confirm('删除这条视频灵感？原任务和原素材不会受影响。')) return;
-  await libraryRequest(`/api/inspirations/${item.id}`, { method: 'DELETE' }); await loadInspirations();
+  await libraryRequest(`/api/inspirations/${item.id}`, { method: 'DELETE' }); await Promise.all([loadInspirations(), loadTrash()]);
 }
 
 function renderInspirations() {
@@ -271,6 +270,7 @@ function renderInspirations() {
   state.inspirations.forEach(item => {
     const card = document.createElement('article'); card.className = 'inspiration-card';
     const video = document.createElement('video'); video.controls = true; video.preload = 'metadata'; loadLocalVideoPreview(video, item.video_url);
+    card.append(selectionControl(`inspiration:${item.id}`));
     const body = document.createElement('div'); body.className = 'inspiration-body';
     const prompt = document.createElement('p'); prompt.textContent = item.prompt;
     const meta = document.createElement('small'); meta.textContent = `${item.ratio} · ${item.duration}s · ${item.references.length} 张参考图`;
@@ -286,7 +286,7 @@ function renderInspirations() {
 }
 
 function activeFolderId() {
-  return ['tasks', 'inspirations'].includes(state.workspaceId) ? '' : state.workspaceId;
+  return ['tasks', 'inspirations', 'trash'].includes(state.workspaceId) ? '' : state.workspaceId;
 }
 
 function activeFolder() {
@@ -294,22 +294,24 @@ function activeFolder() {
 }
 
 function setWorkspace(workspaceId) {
-  const valid = ['tasks', 'inspirations'].includes(workspaceId) || state.library.folders.some(folder => folder.id === workspaceId);
+  const valid = ['tasks', 'inspirations', 'trash'].includes(workspaceId) || state.library.folders.some(folder => folder.id === workspaceId);
   state.workspaceId = valid ? workspaceId : 'tasks';
+  state.visibleLimit = 48; state.selected.clear(); updateSelection();
   const folder = activeFolder();
   const showingInspirations = state.workspaceId === 'inspirations';
-  document.querySelector('#task-view').classList.toggle('hidden', Boolean(folder) || showingInspirations);
+  document.querySelector('#task-view').classList.toggle('hidden', Boolean(folder) || showingInspirations || state.workspaceId === 'trash');
   document.querySelector('#inspiration-view').classList.toggle('hidden', !showingInspirations);
   document.querySelector('#library-view').classList.toggle('hidden', !folder);
   document.querySelector('#workspace-target strong').textContent = showingInspirations ? '视频灵感' : (folder?.name || '成片区');
   document.querySelector('#active-folder-name').textContent = folder?.name || '收藏夹';
   renderWorkspaceTabs();
   renderLibraryAssets();
-  if (showingInspirations) loadInspirations(); else loadTasks();
+  document.querySelector('#trash-view').classList.toggle('hidden', state.workspaceId !== 'trash');
+  if (state.workspaceId === 'trash') loadTrash(); else if (showingInspirations) loadInspirations(); else loadTasks();
 }
 
 function renderWorkspaceTabs() {
-  const entries = [{ id: 'tasks', name: '成片区' }, { id: 'inspirations', name: '视频灵感' }, ...state.library.folders];
+  const entries = [{ id: 'tasks', name: '成片区' }, { id: 'inspirations', name: '视频灵感' }, { id: 'trash', name: '回收站' }, ...state.library.folders];
   const buttons = entries.map(entry => {
     const button = document.createElement('button');
     button.type = 'button'; button.role = 'tab'; button.className = 'production-tab';
@@ -319,6 +321,8 @@ function renderWorkspaceTabs() {
     const label = document.createElement('span'); label.textContent = entry.name; button.append(label);
     if (entry.id === 'inspirations') {
       const count = document.createElement('strong'); count.textContent = state.inspirations.length; button.id = 'inspiration-tab'; button.append(count);
+    } else if (entry.id === 'trash') {
+      const count = document.createElement('strong'); count.textContent = state.trash.length; button.append(count);
     } else if (entry.id !== 'tasks') {
       const count = document.createElement('strong');
       count.textContent = state.library.assets.filter(asset => asset.folder_id === entry.id).length;
@@ -379,7 +383,7 @@ function openMoveDialog(asset) {
 }
 
 function renderLibraryAssets() {
-  const assets = visibleLibraryAssets();
+  const assets = visibleLibraryAssets().slice(0, state.visibleLimit);
   const current = new Map([...assetGrid.querySelectorAll('[data-asset-id]')].map(card => [card.dataset.assetId, card]));
   assetGrid.querySelector('.library-empty')?.remove();
   if (!assets.length) {
@@ -403,11 +407,12 @@ function renderLibraryAssets() {
     const nextCard = document.createElement('article'); nextCard.className = 'asset-card'; nextCard.dataset.assetId = asset.id; nextCard.dataset.signature = signature;
     card ? card.replaceWith(nextCard) : assetGrid.append(nextCard);
     card = nextCard;
+    card.append(selectionControl(`asset:${asset.id}`));
     const frame = document.createElement('div'); frame.className = 'asset-media';
     const media = document.createElement(asset.kind === 'video' ? 'video' : 'img');
     if (asset.kind === 'video') { media.controls = true; media.preload = 'metadata'; loadLocalVideoPreview(media, asset.url); frame.append(media); }
     else {
-      media.src = asset.url; media.alt = asset.name; media.loading = 'lazy';
+      media.src = thumbnailUrl(asset.url); media.alt = asset.name; media.loading = 'lazy';
       const preview = document.createElement('button'); preview.type = 'button'; preview.title = '查看大图';
       preview.append(media); preview.addEventListener('click', () => showImagePreview(asset.url, asset.name)); frame.append(preview);
     }
@@ -429,7 +434,7 @@ function renderLibraryAssets() {
     if (asset.kind === 'image') {
       const use = document.createElement('button'); use.type = 'button'; use.className = 'use-as-reference'; use.textContent = '填入输入框';
       use.addEventListener('click', () => appendAssetToComposer(asset).catch(error => setLibraryError(error.message)));
-      actions.append(use);
+      actions.append(use, imageCopyButton(asset.url));
     }
     if (prompt) {
       const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'copy-prompt'; copy.textContent = '复制 Prompt';
@@ -467,16 +472,18 @@ async function loadLibrary() {
   try {
     const data = await libraryRequest('/api/library');
     state.library = { folders: data.folders || [], assets: data.assets || [] };
-    if (!['tasks', 'inspirations'].includes(state.workspaceId) && !state.library.folders.some(folder => folder.id === state.workspaceId)) state.workspaceId = 'tasks';
+    if (!['tasks', 'inspirations', 'trash'].includes(state.workspaceId) && !state.library.folders.some(folder => folder.id === state.workspaceId)) state.workspaceId = 'tasks';
     renderWorkspaceTabs();
     renderLibraryAssets();
     const folder = activeFolder();
     const showingInspirations = state.workspaceId === 'inspirations';
-    document.querySelector('#task-view').classList.toggle('hidden', Boolean(folder) || showingInspirations);
+    document.querySelector('#task-view').classList.toggle('hidden', Boolean(folder) || showingInspirations || state.workspaceId === 'trash');
     document.querySelector('#inspiration-view').classList.toggle('hidden', !showingInspirations);
     document.querySelector('#library-view').classList.toggle('hidden', !folder);
     document.querySelector('#workspace-target strong').textContent = showingInspirations ? '视频灵感' : (folder?.name || '成片区');
     document.querySelector('#active-folder-name').textContent = folder?.name || '收藏夹';
+    document.querySelector('#trash-view').classList.toggle('hidden', state.workspaceId !== 'trash');
+    updateSelection();
     setLibraryError('');
   } catch (error) { setLibraryError(error.message || '素材收藏夹加载失败'); }
 }
@@ -496,7 +503,7 @@ async function deleteActiveFolder() {
   if (!window.confirm(`删除收藏夹“${folder.name}”？里面的素材会保留并迁回成片区。`)) return;
   await libraryRequest(`/api/library/folders/${folder.id}`, { method: 'DELETE' });
   state.workspaceId = 'tasks';
-  await Promise.all([loadLibrary(), loadTasks()]);
+  await Promise.all([loadLibrary(), loadTasks(), loadTrash()]);
 }
 
 async function importLibraryFiles(files) {
@@ -519,16 +526,13 @@ async function moveLibraryAsset(assetId, folderId) {
 }
 
 async function deleteTask(task) {
-  if (!window.confirm('把这条任务、成片和保存的参考素材移入回收站？')) return;
   await libraryRequest(`/api/tasks/${task.id}`, { method: 'DELETE' });
-  await Promise.all([loadTasks(), loadLibrary()]);
+  await Promise.all([loadTasks(), loadLibrary(), loadTrash()]);
 }
 
 async function deleteLibraryAsset(asset) {
-  const message = asset.task_id ? '这条生成任务和成片会一起移入回收站，继续吗？' : '把这个素材移入回收站？';
-  if (!window.confirm(message)) return;
   await libraryRequest(`/api/library/assets/${asset.id}`, { method: 'DELETE' });
-  await Promise.all([loadLibrary(), loadTasks()]);
+  await Promise.all([loadLibrary(), loadTasks(), loadTrash()]);
 }
 
 function taskCard(task) {
@@ -540,7 +544,7 @@ function taskCard(task) {
     const imageUrl = task.local_image_url || task.image_url;
     const openPreview = document.createElement('button');
     openPreview.type = 'button'; openPreview.className = 'image-preview-trigger'; openPreview.title = '点击放大预览';
-    const image = document.createElement('img'); image.src = imageUrl; image.alt = task.prompt; image.loading = 'lazy';
+    const image = document.createElement('img'); image.src = thumbnailUrl(imageUrl); image.alt = task.prompt; image.loading = 'lazy';
     openPreview.append(image); openPreview.addEventListener('click', () => showImagePreview(imageUrl, task.prompt));
     frame.querySelector('.placeholder').replaceWith(openPreview);
   } else if (task.status === 'completed' && task.kind === 'video' && (task.local_video_url || task.video_url)) {
@@ -561,6 +565,8 @@ function taskCard(task) {
   const promptDetails = fragment.querySelector('.task-prompt-details');
   promptDetails.querySelector('.task-prompt-full').textContent = task.prompt;
   const actions = fragment.querySelector('.card-actions');
+  if (!['queued', 'running'].includes(task.status)) card.append(selectionControl(`task:${task.id}`));
+  if (task.status === 'completed' && task.kind === 'image') actions.append(imageCopyButton(task.local_image_url || task.image_url));
   if (task.status === 'completed' && task.kind === 'image' && (task.local_image_url || task.image_url)) actions.append(link('下载成片 ↘', task.local_image_url || task.image_url));
   if (task.status === 'completed' && task.kind === 'video' && (task.local_video_url || task.video_url)) actions.append(link('下载成片 ↘', task.local_video_url || task.video_url));
   if (task.status === 'completed' && (task.local_image_url || task.local_video_url)) {
@@ -616,12 +622,13 @@ async function loadTasks() {
       ? `${activeCount} 个任务正在制作，完成后会自动出现在本页`
       : '当前页面生成的内容会自动进入这里';
     if (!workspaceTasks.length) {
+      gallery.querySelectorAll('[data-task-id]').forEach(card => card.remove());
       if (!gallery.querySelector('.empty')) gallery.innerHTML = '<div class="empty"><span>◌</span><p>还没有任务</p><small>从左侧输入提示词，第一张成片会出现在这里。</small></div>';
       return;
     }
     gallery.querySelector('.empty')?.remove();
     const current = new Map([...gallery.querySelectorAll('[data-task-id]')].map(card => [card.dataset.taskId, card]));
-    workspaceTasks.forEach((task, index) => {
+    workspaceTasks.slice(0, state.visibleLimit).forEach((task, index) => {
       const signature = taskSignature(task);
       let card = current.get(task.id);
       if (!card || card.dataset.signature !== signature) {
@@ -637,6 +644,7 @@ async function loadTasks() {
       current.delete(task.id);
     });
     current.forEach(card => card.remove());
+    updateSelection();
   } catch { /* The health indicator makes offline state clear. */ }
 }
 async function updateHealth() {
@@ -689,7 +697,7 @@ const dropzone = document.querySelector('#dropzone');
 ['dragenter','dragover'].forEach(type => dropzone.addEventListener(type, event => { event.preventDefault(); dropzone.classList.add('drag'); }));
 ['dragleave','drop'].forEach(type => dropzone.addEventListener(type, event => { event.preventDefault(); dropzone.classList.remove('drag'); }));
 dropzone.addEventListener('drop', event => updateFiles(event.dataTransfer.files));
-document.querySelector('#refresh-button').addEventListener('click', () => Promise.all([loadTasks(), loadLibrary(), loadInspirations()]));
+document.querySelector('#refresh-button').addEventListener('click', () => Promise.all([loadTasks(), loadLibrary(), loadInspirations(), loadTrash(), loadStorage()]));
 const usageToggle = document.querySelector('#usage-toggle');
 const usagePanel = document.querySelector('#usage-panel');
 usageToggle.addEventListener('click', () => {
@@ -731,6 +739,7 @@ document.querySelector('#move-asset-form').addEventListener('submit', async even
 });
 document.querySelectorAll('[data-close-dialog]').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
 const previewDialog = document.querySelector('#image-preview-dialog');
+previewDialog.querySelector('#preview-copy').addEventListener('click', event => copyImage(previewDialog.querySelector('img').src, event.currentTarget).catch(error => notify(error.message)));
 function showImagePreview(url, prompt) {
   previewDialog.querySelector('img').src = url;
   previewDialog.querySelector('img').alt = prompt;
@@ -739,6 +748,144 @@ function showImagePreview(url, prompt) {
 }
 previewDialog.querySelector('[data-close-preview]').addEventListener('click', () => previewDialog.close());
 previewDialog.addEventListener('click', event => { if (event.target === previewDialog) previewDialog.close(); });
+
+function thumbnailUrl(url) { return url.startsWith('/media/') ? `${url}?thumbnail=1` : url; }
+async function loadStorage() {
+  try {
+    const status = await libraryRequest('/api/storage');
+    document.querySelector('#storage-status').textContent = status.ready ? `云端原图 ${status.stored} · 待同步 ${status.pending}${status.sync?.running ? ` · 正在同步，已完成 ${status.sync.synced}` : status.sync?.failed ? ` · ${status.sync.failed} 张同步失败，原图仍在本地` : ''}` : '云存储未配置 · 原图保留在本地';
+    document.querySelector('#sync-storage').disabled = !status.ready || !status.pending || status.sync?.running;
+  } catch { document.querySelector('#storage-status').textContent = '云存储状态暂不可用'; }
+}
+document.querySelector('#sync-storage').addEventListener('click', async event => {
+  const button = event.currentTarget; button.disabled = true; button.textContent = '正在同步…';
+  try {
+    const result = await libraryRequest('/api/storage/sync', { method: 'POST' });
+    notify('已开始后台同步原图，可以继续整理素材');
+  } catch (error) { notify(error.message); }
+  finally { button.textContent = '同步已有原图'; await loadStorage(); }
+});
+loadStorage(); setInterval(loadStorage, 5000);
+
+function notify(message) {
+  const toast = document.querySelector('#studio-toast');
+  toast.textContent = message; toast.classList.remove('hidden');
+  clearTimeout(state.toastTimer); state.toastTimer = setTimeout(() => toast.classList.add('hidden'), 4500);
+}
+
+function imageCopyButton(url) {
+  const button = document.createElement('button'); button.type = 'button'; button.className = 'copy-image'; button.textContent = '复制图片';
+  button.addEventListener('click', () => copyImage(url, button).catch(error => notify(error.message)));
+  return button;
+}
+
+async function copyImage(url, button) {
+  if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') throw new Error('当前浏览器不支持复制图片，请下载图片后复制');
+  // Start clipboard.write within the click gesture; prepare PNG asynchronously.
+  const png = (async () => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('图片读取失败');
+    const blob = await response.blob();
+    if (blob.type === 'image/png') return blob;
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const canvas = document.createElement('canvas'); canvas.width = bitmap.width; canvas.height = bitmap.height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0);
+      return await new Promise((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('图片转换失败')), 'image/png'));
+    } finally { bitmap.close(); }
+  })();
+  button.disabled = true;
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+    notify('图片已复制，可以直接粘贴');
+  } finally { button.disabled = false; }
+}
+
+function selectionControl(key) {
+  const label = document.createElement('label'); label.className = 'card-select'; label.title = '选择此项';
+  const input = document.createElement('input'); input.type = 'checkbox'; input.dataset.selectionKey = key; input.setAttribute('aria-label', '选择此项'); input.checked = state.selected.has(key);
+  input.addEventListener('change', () => { input.checked ? state.selected.add(key) : state.selected.delete(key); updateSelection(); });
+  label.append(input); return label;
+}
+
+function visibleSelectionKeys() {
+  if (state.workspaceId === 'trash') return state.trash.filter(item => item.can_restore).map(item => `trash:${item.id}`);
+  if (state.workspaceId === 'inspirations') return state.inspirations.map(item => `inspiration:${item.id}`);
+  if (activeFolderId()) return visibleLibraryAssets().slice(0, state.visibleLimit).map(item => `asset:${item.id}`);
+  return state.tasks.filter(item => !['queued', 'running'].includes(item.status) && (item.status !== 'failed' || item.history_version >= 2)).slice(0, state.visibleLimit).map(item => `task:${item.id}`);
+}
+
+function updateSelection() {
+  const keys = new Set(visibleSelectionKeys());
+  const total = state.workspaceId === 'tasks' ? state.tasks.length : activeFolderId() ? visibleLibraryAssets().length : 0;
+  const more = document.querySelector('#show-more'); more.classList.toggle('hidden', total <= state.visibleLimit); more.textContent = `显示更多 · 剩余 ${Math.max(0, total - state.visibleLimit)} 项`;
+  for (const key of state.selected) if (!keys.has(key)) state.selected.delete(key);
+  document.querySelectorAll('[data-selection-key]').forEach(input => {
+    input.checked = state.selected.has(input.dataset.selectionKey);
+    input.closest('article')?.classList.toggle('selected', input.checked);
+  });
+  document.querySelector('#selection-count').textContent = state.selected.size ? `已选 ${state.selected.size} 项` : '选择卡片，批量整理';
+  const action = document.querySelector('#batch-action');
+  action.textContent = state.workspaceId === 'trash' ? '恢复所选' : '移入回收站';
+  action.disabled = !state.selected.size || state.batchBusy;
+  document.querySelector('#select-all').disabled = !keys.size || state.batchBusy;
+  document.querySelector('#clear-selection').disabled = !state.selected.size || state.batchBusy;
+}
+
+async function batchAction() {
+  if (state.batchBusy) return;
+  state.batchBusy = true; updateSelection();
+  const selected = [...state.selected]; let succeeded = 0; const errors = [];
+  try {
+    for (const key of selected) {
+      const [kind, id] = key.split(':');
+      const path = kind === 'trash' ? `/api/trash/${id}/restore` : kind === 'asset' ? `/api/library/assets/${id}` : kind === 'inspiration' ? `/api/inspirations/${id}` : `/api/tasks/${id}`;
+      try { await libraryRequest(path, { method: kind === 'trash' ? 'POST' : 'DELETE' }); state.selected.delete(key); succeeded++; }
+      catch (error) { errors.push(error.message); }
+    }
+    await Promise.all([loadLibrary(), loadTasks(), loadInspirations(), loadTrash()]);
+    notify(`${state.workspaceId === 'trash' ? '已恢复' : '已移入回收站'} ${succeeded} 项${errors.length ? `；${errors.length} 项失败：${errors[0]}` : ''}`);
+  } finally { state.batchBusy = false; updateSelection(); }
+}
+
+async function loadTrash() {
+  try {
+    state.trash = (await libraryRequest('/api/trash')).items || [];
+    renderWorkspaceTabs(); renderTrash(); updateSelection();
+  } catch (error) { notify(error.message || '回收站加载失败'); }
+}
+
+function renderTrash() {
+  const grid = document.querySelector('#trash-grid'); grid.replaceChildren();
+  if (!state.trash.length) { const empty = document.createElement('div'); empty.className = 'library-empty'; empty.innerHTML = '<span>↶</span><p>回收站是空的</p><small>移入这里的成片和素材可以恢复，不会自动清空。</small>'; grid.append(empty); return; }
+  state.trash.forEach(item => {
+    const card = document.createElement('article'); card.className = 'asset-card';
+    if (item.can_restore) card.append(selectionControl(`trash:${item.id}`));
+    if (item.url) {
+      const frame = document.createElement('div'); frame.className = 'asset-media';
+      if (item.kind === 'video') { const video = document.createElement('video'); video.controls = true; video.preload = 'metadata'; loadLocalVideoPreview(video, item.url); frame.append(video); }
+      else { const preview = document.createElement('button'); preview.type = 'button'; const image = document.createElement('img'); image.src = thumbnailUrl(item.url); image.alt = item.name; image.loading = 'lazy'; preview.append(image); preview.addEventListener('click', () => showImagePreview(item.url, item.name)); frame.append(preview); }
+      card.append(frame);
+    }
+    const body = document.createElement('div'); body.className = 'asset-body';
+    const title = document.createElement('p'); title.textContent = item.name;
+    const date = document.createElement('small'); date.textContent = `移入时间 · ${new Date(item.deleted_at * 1000).toLocaleString('zh-CN')}`;
+    const actions = document.createElement('div'); actions.className = 'asset-actions';
+    const restore = document.createElement('button'); restore.type = 'button'; restore.textContent = item.can_restore ? '恢复' : '旧条目 · 缺少恢复信息'; restore.disabled = !item.can_restore;
+    restore.addEventListener('click', async () => {
+      restore.disabled = true;
+      try { await libraryRequest(`/api/trash/${item.id}/restore`, { method: 'POST' }); await Promise.all([loadLibrary(), loadTasks(), loadInspirations(), loadTrash()]); notify('已恢复到原收藏夹，原收藏夹不存在时恢复到成片区'); }
+      catch (error) { restore.disabled = false; notify(error.message); }
+    });
+    actions.append(restore); body.append(title, date, actions); card.append(body); grid.append(card);
+  });
+}
+
+document.querySelector('#show-more').addEventListener('click', () => { state.visibleLimit += 48; renderLibraryAssets(); loadTasks(); updateSelection(); });
+document.querySelector('#select-all').addEventListener('click', () => { visibleSelectionKeys().forEach(key => state.selected.add(key)); updateSelection(); });
+document.querySelector('#clear-selection').addEventListener('click', () => { state.selected.clear(); updateSelection(); });
+document.querySelector('#batch-action').addEventListener('click', () => batchAction().catch(error => notify(error.message)));
+loadTrash();
 setKind('image'); updateBatchCount(); loadUsage(); loadInspirations(); loadLibrary().then(loadTasks); setInterval(loadUsage, 30000); state.timer = setInterval(() => {
   updateHealth(); loadTasks(); if (activeFolderId()) loadLibrary();
 }, 3500);

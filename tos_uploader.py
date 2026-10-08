@@ -143,3 +143,26 @@ def delete_hosted_references(
     client = _client(config, _tos_module(tos_module))
     for key in keys:
         client.delete_object(config["bucket"], key)
+
+
+def upload_original(source: Path, mime: str, read_value, *, tos_module=None) -> dict[str, str]:
+    """Persist an unmodified original outside the temporary-reference namespace."""
+    config = _config(read_value)
+    module = _tos_module(tos_module)
+    suffix = source.suffix.lower() if SAFE_SUFFIX.fullmatch(source.suffix.lower()) else ''
+    key = f"studio-originals/{uuid.uuid4().hex}{suffix}"
+    client = _client(config, module)
+    with source.open('rb') as content:
+        client.put_object(config['bucket'], key, content=content, content_type=mime)
+    return {'tos_key': key, 'bucket': config['bucket']}
+
+
+def original_url(info: dict, read_value, *, tos_module=None) -> str:
+    config = _config(read_value)
+    module = _tos_module(tos_module)
+    output = _client(config, module).pre_signed_url(
+        module.HttpMethodType.Http_Method_Get, info['bucket'], info['tos_key'], expires=config['ttl'],
+    )
+    if not getattr(output, 'signed_url', ''):
+        raise RuntimeError('TOS 未返回原图访问链接')
+    return str(output.signed_url)

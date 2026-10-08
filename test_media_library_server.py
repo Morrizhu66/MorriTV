@@ -66,6 +66,37 @@ class MediaLibraryServerTests(unittest.TestCase):
             response = exc
         return response.status, json.loads(response.read().decode("utf-8"))
 
+    def test_cloud_original_and_thumbnail_remain_usable_through_trash_restore(self):
+        import io
+        from PIL import Image
+        from unittest.mock import patch
+        from cloud_images import CloudImages
+        source = self.root / 'cloud-original.png'
+        Image.new('RGB', (1200, 800), '#598277').save(source)
+        original = source.read_bytes()
+        asset = server.MEDIA_LIBRARY.import_stream('original.png', 'image/png', io.BytesIO(original))
+        path = server.RESULTS_DIR / asset['file_name']
+        store = CloudImages(self.root / 'cloud.json')
+        with patch.object(server, 'CLOUD_IMAGES', store), patch.object(server, 'private_env_value', return_value='configured'), patch('tos_uploader.upload_original', return_value={'tos_key': 'studio-originals/test', 'bucket': 'private'}), patch.object(store, 'url', return_value=source.as_uri()):
+            store.persist(path, server.private_env_value)
+            with urlopen(self.base_url + asset['url']) as response:
+                self.assertEqual(response.read(), original)
+            with urlopen(self.base_url + asset['url'] + '?thumbnail=1') as response:
+                self.assertEqual(response.headers.get_content_type(), 'image/webp')
+                with Image.open(io.BytesIO(response.read())) as preview:
+                    self.assertLessEqual(max(preview.size), 480)
+            status, _ = self.request_json('/api/library/assets/' + asset['id'], method='DELETE')
+            self.assertEqual(status, 200)
+            _, trash = self.request_json('/api/trash')
+            entry = trash['items'][0]
+            with urlopen(self.base_url + entry['url']) as response:
+                self.assertEqual(response.read(), original)
+            status, _ = self.request_json('/api/trash/' + entry['id'] + '/restore', method='POST')
+            self.assertEqual(status, 200)
+            restored = server.MEDIA_LIBRARY.snapshot()['assets'][0]
+            with urlopen(self.base_url + restored['url']) as response:
+                self.assertEqual(response.read(), original)
+
     def test_library_snapshot_exposes_persistent_folders_and_assets(self):
         health_status, health = self.request_json("/api/health")
         library_status, library = self.request_json("/api/library")

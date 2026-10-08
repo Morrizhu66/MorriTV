@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urlparse
 from urllib.request import urlopen
 
+from cloud_images import CloudImages
 import hfsy_client
 from inspiration_library import InspirationLibrary
 from media_library import MediaLibrary
@@ -48,6 +49,9 @@ VIDEO_MAX_WORKERS = 4
 for folder in (UPLOADS_DIR, RESULTS_DIR, COLLECTIONS_DIR, TRASH_DIR, INSPIRATIONS_DIR):
     folder.mkdir(parents=True, exist_ok=True)
 
+CLOUD_IMAGES = CloudImages(APP_DIR / "cloud-images.json")
+CLOUD_ERRORS: dict[str, str] = {}
+CLOUD_SYNC = {"running": False, "synced": 0, "failed": 0}
 MEDIA_LIBRARY = MediaLibrary(LIBRARY_FILE, RESULTS_DIR, COLLECTIONS_DIR)
 INSPIRATION_LIBRARY = InspirationLibrary(INSPIRATION_FILE, INSPIRATIONS_DIR, RESULTS_DIR, UPLOADS_DIR, COLLECTIONS_DIR)
 TASKS: dict[str, dict[str, Any]] = {}
@@ -293,6 +297,7 @@ def _new_trash_root(kind: str, item_id: str) -> Path:
 
 def _trash_references(task: dict[str, Any], trash_root: Path) -> list[str]:
     moved: list[str] = []
+    restore_paths = []
     for reference in task.get("reference_files") or []:
         path = Path(str(reference.get("path") or ""))
         if not path.is_file():
@@ -304,7 +309,9 @@ def _trash_references(task: dict[str, Any], trash_root: Path) -> list[str]:
         destination.mkdir(parents=True, exist_ok=True)
         target = MediaLibrary._available_target(destination, str(reference.get("name") or path.name))
         path.replace(target)
+        restore_paths.append({"original": str(path), "file": target.name})
         moved.append(str(target))
+    (trash_root / "reference-paths.json").write_text(json.dumps(restore_paths), encoding="utf-8")
     return moved
 
 
@@ -339,6 +346,120 @@ def delete_library_asset(asset_id: str) -> dict[str, Any]:
     deleted = MEDIA_LIBRARY.trash_asset(asset_id, trash_root)
     (trash_root / "metadata.json").write_text(json.dumps({"deleted_at": now(), **deleted}, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"asset": deleted["asset"], "trash_path": str(trash_root)}
+
+
+def persist_cloud_image(path: Path) -> bool:
+    try:
+        CLOUD_IMAGES.persist(path, private_env_value)
+        CLOUD_ERRORS.pop(str(path), None)
+        return True
+    except Exception as exc:
+        CLOUD_ERRORS[str(path)] = str(exc)[:200]
+        return False
+
+
+def cloud_status() -> dict[str, Any]:
+    assets = [item for item in MEDIA_LIBRARY.snapshot()["assets"] if item.get("kind") == "image"]
+    stored = 0
+    for asset in assets:
+        path = MEDIA_LIBRARY.workspace_result_dir(str(asset.get("folder_id") or "")) / asset["file_name"]
+        if CLOUD_IMAGES.info(path):
+            stored += 1
+    return {"ready": tos_uploader.config_status(private_env_value)["ready"], "stored": stored,
+            "pending": len(assets) - stored, "errors": len(CLOUD_ERRORS), "sync": dict(CLOUD_SYNC)}
+
+
+def sync_cloud_images() -> None:
+    try:
+        assets = [item for item in MEDIA_LIBRARY.snapshot()["assets"] if item.get("kind") == "image"]
+        for asset in assets:
+            with LOCK:
+                current = next((item for item in MEDIA_LIBRARY.snapshot()["assets"] if item["id"] == asset["id"]), None)
+                if not current:
+                    continue
+                source = MEDIA_LIBRARY.workspace_result_dir(str(current.get("folder_id") or "")) / current["file_name"]
+                if CLOUD_IMAGES.info(source):
+                    continue
+            if persist_cloud_image(source):
+                CLOUD_SYNC["synced"] += 1
+            else:
+                CLOUD_SYNC["failed"] += 1
+    finally:
+        CLOUD_SYNC["running"] = False
+
+
+def trash_entry(entry_id: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", entry_id):
+        raise ValueError("回收站条目无效")
+    root = TRASH_DIR / entry_id
+    if not root.is_dir() or root.is_symlink():
+        raise ValueError("回收站条目不存在")
+    return root
+
+
+def list_trash() -> list[dict[str, Any]]:
+    entries = []
+    for root in TRASH_DIR.iterdir():
+        if not root.is_dir() or root.is_symlink():
+            continue
+        try:
+            metadata = json.loads((root / "metadata.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            metadata = {}
+        wrapper = metadata.get("asset") or {}
+        asset = wrapper.get("asset", wrapper)
+        task = metadata.get("task") or {}
+        item = metadata.get("item") or {}
+        media = next((file for area in ("results", "bundle/video") for file in (root / area).glob("*") if file.is_file()), None)
+        entries.append({"id": root.name, "name": asset.get("name") or task.get("prompt") or item.get("prompt") or root.name,
+                        "kind": asset.get("kind") or task.get("kind") or "video",
+                        "deleted_at": metadata.get("deleted_at") or root.stat().st_mtime,
+                        "url": f"/media/trash/{root.name}/{media.relative_to(root).as_posix()}" if media else "",
+                        "can_restore": bool(metadata)})
+    return sorted(entries, key=lambda item: item["deleted_at"], reverse=True)
+
+
+def restore_trash(entry_id: str) -> None:
+    with LOCK:
+        root = trash_entry(entry_id)
+        metadata = json.loads((root / "metadata.json").read_text(encoding="utf-8"))
+        if metadata.get("item"):
+            INSPIRATION_LIBRARY.restore(metadata["item"], root / "bundle")
+        else:
+            wrapper = metadata.get("asset") or {}
+            asset = wrapper.get("asset", wrapper)
+            task = restore_history_task(metadata["task"]) if metadata.get("task") else None
+            if task and task["id"] in TASKS:
+                raise ValueError("任务已存在")
+            restored = None
+            if asset:
+                source = root / "results" / Path(wrapper.get("trash_file") or metadata.get("trash_file") or asset["file_name"]).name
+                if not source.is_file():
+                    raise ValueError("回收站文件缺失")
+                restored = MEDIA_LIBRARY.restore_asset(asset, source)
+            if task:
+                mapping_file = root / "reference-paths.json"
+                mappings = json.loads(mapping_file.read_text()) if mapping_file.exists() else [
+                    {"original": reference.get("path", ""), "file": Path(file).name}
+                    for reference, file in zip(task["reference_files"], metadata.get("references") or [])]
+                for mapping in mappings:
+                    source = root / "references" / Path(mapping["file"]).name
+                    original = Path(mapping["original"]).resolve()
+                    if source.is_file() and any(original.is_relative_to(base.resolve()) for base in (UPLOADS_DIR, COLLECTIONS_DIR)):
+                        original.parent.mkdir(parents=True, exist_ok=True)
+                        target = MediaLibrary._available_target(original.parent, original.name)
+                        source.replace(target)
+                        for reference in task["reference_files"]:
+                            if Path(reference.get("path") or "").resolve() == original:
+                                reference["path"] = str(target)
+                if restored:
+                    task["folder_id"] = restored["folder_id"]
+                    task["local_image_url" if task["kind"] == "image" else "local_video_url"] = restored["url"]
+                elif not MEDIA_LIBRARY.folder_exists(task.get("folder_id", "")):
+                    task["folder_id"] = ""
+                record_task_event("restored", task)
+                TASKS[task["id"]] = task
+        shutil.rmtree(root)
 
 
 def register_completed_task(task: dict[str, Any]) -> dict[str, Any] | None:
@@ -491,7 +612,7 @@ def copy_references(task_id: str, fields: cgi.FieldStorage, folder_id: str = "")
         target = destination / f"{len(copied) + 1:02d}-{filename}"
         with target.open("wb") as output:
             shutil.copyfileobj(item.file, output)
-        mime = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+        mime = (cloud_info.get("thumbnail_mime", "image/png") if cloud_info else mimetypes.guess_type(target.name)[0] or "application/octet-stream")
         copied.append({"name": original, "path": str(target), "mime": mime})
     return copied
 
@@ -627,6 +748,7 @@ def download_image_result(image_url: str, task_id: str, folder_id: str = "") -> 
         with temporary.open("wb") as output:
             shutil.copyfileobj(response, output)
         temporary.replace(target)
+    persist_cloud_image(target)
     return workspace_media_url(folder_id, "results", target.name)
 
 
@@ -800,6 +922,10 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 return self.respond_json({"tasks": [public_task(task) for task in tasks]})
         if path == "/api/usage":
             return self.respond_json(daily_usage())
+        if path == "/api/storage":
+            return self.respond_json({"ok": True, **cloud_status()})
+        if path == "/api/trash":
+            return self.respond_json({"ok": True, "items": list_trash()})
         if path == "/api/library":
             snapshot = MEDIA_LIBRARY.snapshot()
             return self.respond_json({
@@ -814,6 +940,9 @@ class StudioHandler(SimpleHTTPRequestHandler):
             return self.serve_media(path)
         if path in {"/", "/index.html"}:
             self.path = "/index.html"
+        if path in {"/cloud-images.json", "/cloud-images.tmp"}:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
         return super().do_GET()
 
     def serve_media(self, request_path: str) -> None:
@@ -839,6 +968,15 @@ class StudioHandler(SimpleHTTPRequestHandler):
             except ValueError:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
+        elif relative.startswith("trash/"):
+            try:
+                target = (TRASH_DIR / relative.removeprefix("trash/")).resolve()
+                target.relative_to(TRASH_DIR.resolve())
+                if "metadata.json" == target.name or target.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".mov", ".webm", ".m4v"}:
+                    raise ValueError("不是媒体文件")
+            except ValueError:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
         elif relative.startswith("inspirations/"):
             try:
                 target = (INSPIRATIONS_DIR / relative.removeprefix("inspirations/")).resolve()
@@ -851,6 +989,21 @@ class StudioHandler(SimpleHTTPRequestHandler):
             return
         if not target.is_file():
             self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        cloud_info = CLOUD_IMAGES.info(target)
+        if cloud_info and "thumbnail=1" not in urlparse(self.path).query:
+            try:
+                # Same-origin streaming keeps clipboard/download independent of bucket CORS.
+                with urlopen(CLOUD_IMAGES.url(cloud_info, private_env_value), timeout=120) as original:
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", cloud_info["mime"])
+                    self.send_header("Content-Length", str(cloud_info["original_bytes"]))
+                    self.end_headers()
+                    shutil.copyfileobj(original, self.wfile)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            except Exception:
+                self.send_error(HTTPStatus.BAD_GATEWAY, "Cloud original unavailable")
             return
         size = target.stat().st_size
         try:
@@ -865,7 +1018,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         start, end = byte_range or (0, max(0, size - 1))
         content_length = end - start + 1 if size else 0
         self.send_response(HTTPStatus.PARTIAL_CONTENT if byte_range else HTTPStatus.OK)
-        self.send_header("Content-Type", mimetypes.guess_type(target.name)[0] or "application/octet-stream")
+        self.send_header("Content-Type", (cloud_info.get("thumbnail_mime", "image/png") if cloud_info else mimetypes.guess_type(target.name)[0] or "application/octet-stream"))
         self.send_header("Accept-Ranges", "bytes")
         if byte_range:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
@@ -887,6 +1040,18 @@ class StudioHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
+            if path == "/api/storage/sync":
+                if not tos_uploader.config_status(private_env_value)["ready"]:
+                    raise ValueError("TOS 未配置，原图保留在本地")
+                with LOCK:
+                    if not CLOUD_SYNC["running"]:
+                        CLOUD_SYNC.update(running=True, synced=0, failed=0)
+                        threading.Thread(target=sync_cloud_images, name="cloud-image-sync", daemon=True).start()
+                return self.respond_json({"ok": True, **cloud_status()}, HTTPStatus.ACCEPTED)
+            restore_match = re.fullmatch(r"/api/trash/([A-Za-z0-9_-]+)/restore", path)
+            if restore_match:
+                restore_trash(restore_match.group(1))
+                return self.respond_json({"ok": True})
             if path == "/api/tasks":
                 fields = self.read_multipart()
                 tasks = create_tasks(fields)
@@ -916,6 +1081,8 @@ class StudioHandler(SimpleHTTPRequestHandler):
                     media.file,
                     str(fields.getfirst("folder_id", "") or ""),
                 )
+                if asset["kind"] == "image":
+                    persist_cloud_image(MEDIA_LIBRARY.workspace_result_dir(asset["folder_id"]) / asset["file_name"])
                 return self.respond_json({"ok": True, "asset": asset}, HTTPStatus.CREATED)
             move_match = re.fullmatch(r"/api/library/assets/([A-Za-z0-9_-]+)/move", path)
             if move_match:
@@ -942,6 +1109,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
             if inspiration_match:
                 trash_root = _new_trash_root("inspiration", inspiration_match.group(1))
                 deleted = INSPIRATION_LIBRARY.delete(inspiration_match.group(1), trash_root)
+                (trash_root / "metadata.json").write_text(json.dumps({"deleted_at": now(), "item": deleted["item"]}, ensure_ascii=False), encoding="utf-8")
                 return self.respond_json({"ok": True, "deleted_item": deleted["item"], "trash_path": str(trash_root)})
             folder_match = re.fullmatch(r"/api/library/folders/([A-Za-z0-9_-]+)", path)
             if folder_match:

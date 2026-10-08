@@ -262,3 +262,26 @@ class MediaLibrary:
             self._data["assets"].append(asset)
             self._write()
             return dict(asset)
+
+    def restore_asset(self, asset: dict[str, Any], source: Path) -> dict[str, Any]:
+        """Restore a trashed file, falling back to the default workspace."""
+        with self._lock:
+            if any(item.get("id") == asset["id"] for item in self._data["assets"]):
+                raise ValueError("素材已存在")
+            restored = dict(asset)
+            folder_id = str(asset.get("folder_id") or "")
+            if not self.folder_exists(folder_id):
+                folder_id = ""
+            directory = self.workspace_result_dir(folder_id)
+            directory.mkdir(parents=True, exist_ok=True)
+            target = self._available_target(directory, Path(asset["file_name"]).name)
+            source.replace(target)
+            restored.update(folder_id=folder_id, file_name=target.name, url=self.media_url(folder_id, "results", target.name))
+            self._data["assets"].append(restored)
+            try:
+                self._write()
+            except Exception:
+                self._data["assets"].remove(restored)
+                target.replace(source)
+                raise
+            return dict(restored)
