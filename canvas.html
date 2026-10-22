@@ -3,87 +3,91 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Model Studio · 故事画板</title>
+    <title>Morri · 创作画板</title>
     <link rel="stylesheet" href="/canvas.css" />
   </head>
   <body>
     <header class="top">
-      <a class="brand" href="/canvas.html"
-        ><b>M<span>•</span></b
-        ><span>MODEL STUDIO<small>故事，从这里发生。</small></span></a
-      >
-      <div class="project-area">
-        <select id="project-select" aria-label="项目"></select
-        ><button id="project-menu" title="项目设置">•••</button
-        ><button id="new-project">＋ 项目</button>
+      <div class="project-pill">
+        <a class="brand" href="/canvas.html" aria-label="Morri 创作画板"
+          >m<span>·</span></a
+        >
+        <select id="project-select" aria-label="项目"></select>
+        <span class="breadcrumb-slash">/</span>
+        <details class="board-switcher">
+          <summary>
+            <span id="board-title">画板</span><span class="chevron">⌄</span>
+          </summary>
+          <div class="dropdown board-dropdown">
+            <div class="menu-heading">
+              项目画板<button id="new-board" title="新建画板">＋</button>
+            </div>
+            <div id="board-list"></div>
+            <button id="rename-board" class="menu-item">重命名画板</button>
+          </div>
+        </details>
+        <details class="project-options">
+          <summary aria-label="项目菜单">···</summary>
+          <div class="dropdown">
+            <button id="new-project" class="menu-item">新建项目</button
+            ><button id="project-menu" class="menu-item">项目设置</button>
+            <hr />
+            <button id="export-board" class="menu-item">导出画板备份</button
+            ><button id="import-board" class="menu-item">导入画板备份</button
+            ><a href="/index.html" class="menu-item">打开生成控制台 ↗</a>
+          </div>
+        </details>
+      </div>
+      <div class="view-tabs" role="tablist" aria-label="工作区视图">
+        <button id="canvas-view" role="tab" aria-selected="true">画板</button
+        ><button id="story-view" role="tab" aria-selected="false">镜头</button>
       </div>
       <div class="top-right">
-        <span id="save-state" role="status">正在打开画板…</span
-        ><button id="task-toggle">任务 <b id="task-count">0</b></button
-        ><button id="export-board">导出画板</button
-        ><button id="import-board">导入画板</button
-        ><input
-          hidden
-          id="board-file"
-          type="file"
-          accept="application/json"
-        /><button id="export-shots">导出采用素材</button
-        ><a href="/index.html">旧版控制台 ↗</a>
-      </div>
-    </header>
-    <div class="workspace">
-      <aside class="sidebar">
-        <div class="sidebar-heading">
-          <span>画板 / BOARDS</span
-          ><button id="new-board" title="新建画板">＋</button>
-        </div>
-        <div id="board-list"></div>
-        <button id="rename-board" class="subtle">重命名当前画板</button>
-        <div class="sidebar-heading"><span>创作工具</span></div>
-        <button class="tool" data-create="image">
-          <i>▧</i><span>图片生成<small>从想法，到画面</small></span
-          ><kbd>I</kbd></button
-        ><button class="tool" data-create="video">
-          <i>▷</i><span>视频生成<small>让画面开始叙事</small></span
-          ><kbd>V</kbd></button
-        ><button class="tool" data-create="text">
-          <i>T</i><span>文本 / 剧本</span><kbd>T</kbd></button
-        ><button class="tool" id="upload-button">
-          <i>↥</i><span>上传素材</span></button
-        ><input
-          hidden
-          id="upload"
-          type="file"
-          multiple
-          accept="image/*,video/*"
-        /><button class="tool" id="library-button">
-          <i>▦</i><span>素材库<small>复用已有图片与视频</small></span>
+        <span id="save-state" role="status">正在打开…</span
+        ><button id="task-toggle" class="quiet-button" title="任务中心">
+          任务 <b id="task-count">0</b></button
+        ><button id="export-shots" class="export-button">
+          导出作品 <span>↗</span>
         </button>
-        <div class="sidebar-heading"><span>整理画板</span></div>
-        <button class="subtle" id="group-button">将所选节点分组</button
-        ><button class="subtle" id="arrange-button">自动排列所选 / 全部</button>
-        <div class="sidebar-foot">
-          <span class="tiny-label">CREATIVE SPACE</span>
-          <p>一个镜头，<br />无限种可能。</p>
-          <small
-            >空格拖动平移 · ⌘ / Ctrl + 滚轮缩放<br />Shift 多选 ·
-            拖动空白处框选<br />⌘Z 撤销 · ⌘⇧Z 重做</small
-          ><span id="provider-state"></span>
-        </div>
-      </aside>
+      </div>
+      <input hidden id="board-file" type="file" accept="application/json" />
+    </header>
+    <aside id="save-notice" role="alert" hidden>
+      <span id="save-notice-message"></span
+      ><button id="save-draft">导出草稿</button
+      ><button id="reload-board">备份并载入最新</button>
+    </aside>
+    <div class="workspace">
       <main id="viewport" tabindex="0" aria-label="无限创作画板">
         <div class="canvas-top">
-          <div>
-            <span class="tiny-label">STORY CANVAS</span>
-            <h1 id="board-title">我的第一场戏</h1>
+          <div class="board-caption">
+            <span class="canvas-dot"></span
+            ><span id="board-caption">自由画板</span
+            ><span id="node-count"></span>
           </div>
           <div class="canvas-actions">
-            <input
-              id="node-search"
-              placeholder="搜索节点，回车定位"
-              aria-label="搜索节点"
-            /><button id="undo" title="撤销">↶</button
-            ><button id="redo" title="重做">↷</button>
+            <div class="search-wrap">
+              <span data-icon="search"></span
+              ><input
+                id="node-search"
+                placeholder="搜索节点"
+                aria-label="搜索节点"
+              />
+            </div>
+            <div class="history-buttons">
+              <button
+                id="undo"
+                title="撤销"
+                aria-label="撤销"
+                data-icon="undo"
+              ></button
+              ><button
+                id="redo"
+                title="重做"
+                aria-label="重做"
+                data-icon="redo"
+              ></button>
+            </div>
           </div>
         </div>
         <div id="world">
@@ -92,50 +96,180 @@
         </div>
         <div id="selection-box" hidden></div>
         <div id="empty">
-          <div class="empty-symbol">✳</div>
-          <span class="tiny-label">A NEW SCENE STARTS HERE</span>
-          <h2>把想法，铺成故事。</h2>
+          <div class="empty-composition">
+            <div class="empty-card image-outline" data-icon="image"></div>
+            <div class="empty-card text-outline">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="empty-card video-outline" data-icon="play"></div>
+            <i class="empty-connector"></i>
+          </div>
+          <span class="tiny-label">YOUR NEXT SCENE</span>
+          <h2>从一个画面开始。</h2>
           <p>
-            创建一个生成节点，或把参考素材拖到这里。<br />在提示词里输入
-            @，连接画板里的角色与场景。
+            放入参考素材，连接想法。<br />在生成节点里输入
+            <kbd>@</kbd>，让角色与场景自然衔接。
           </p>
-          <button class="primary" data-create="image">＋ 创建图片节点</button
-          ><button id="empty-upload">导入参考素材</button>
+          <div class="empty-actions">
+            <button class="primary" data-create="image">
+              创建图片节点 <span>↗</span></button
+            ><button id="empty-upload" class="quiet-button">导入素材</button>
+          </div>
         </div>
         <div class="navigation">
-          <button id="fit">适应画板</button><button id="zoom-out">−</button
-          ><span id="zoom-label">100%</span><button id="zoom-in">＋</button
-          ><button id="locate">定位所选</button>
+          <button
+            id="fit"
+            title="适应全部内容"
+            aria-label="适应画板"
+            data-icon="fit"
+          ></button
+          ><button id="zoom-out" aria-label="缩小">−</button
+          ><button id="zoom-label" title="恢复 100%">100%</button
+          ><button id="zoom-in" aria-label="放大">＋</button
+          ><span class="separator"></span
+          ><button
+            id="locate"
+            title="定位所选"
+            aria-label="定位所选"
+            data-icon="locate"
+          ></button
+          ><button
+            id="toggle-map"
+            title="小地图"
+            aria-label="切换小地图"
+            data-icon="map"
+          ></button
+          ><button
+            id="toggle-edges"
+            title="显示 / 隐藏连线"
+            aria-label="切换引用连线"
+            aria-pressed="true"
+            data-icon="link"
+          ></button>
         </div>
-        <svg id="minimap" viewBox="0 0 180 110" aria-label="画板缩略地图"></svg>
+        <svg
+          id="minimap"
+          viewBox="0 0 180 110"
+          aria-label="画板缩略地图"
+          hidden
+        ></svg>
         <div id="reference-mode" hidden>
-          点击一个素材节点添加引用 <button id="cancel-reference">取消</button>
+          <span class="pick-dot"></span>选择画板上的素材<button
+            id="cancel-reference"
+          >
+            取消
+          </button>
+        </div>
+        <nav class="creation-dock" aria-label="创作工具">
+          <button data-create="image" title="创建图片节点 · I">
+            <span data-icon="image"></span><span>图片</span></button
+          ><button data-create="video" title="创建视频节点 · V">
+            <span data-icon="video"></span><span>视频</span></button
+          ><button data-create="text" title="创建文本节点 · T">
+            <span data-icon="text"></span><span>文本</span></button
+          ><span class="dock-divider"></span
+          ><button id="upload-button" title="上传图片或视频">
+            <span data-icon="upload"></span><span>上传</span></button
+          ><button id="library-button" title="素材库">
+            <span data-icon="library"></span><span>素材</span></button
+          ><span class="dock-divider"></span>
+          <details class="dock-options">
+            <summary title="画板工具" aria-label="画板工具">
+              <span data-icon="sliders"></span><span>工具</span>
+            </summary>
+            <div class="dropdown">
+              <button id="group-button" class="menu-item">将所选节点分组</button
+              ><button id="arrange-button" class="menu-item">
+                自动排列所选 / 全部</button
+              ><button id="toggle-shots" class="menu-item">
+                显示 / 收起镜头条
+              </button>
+              <hr />
+              <button id="theme-toggle" class="menu-item">切换浅色外观</button
+              ><button id="help-toggle" class="menu-item">快捷键</button>
+            </div>
+          </details>
+        </nav>
+        <input
+          hidden
+          id="upload"
+          type="file"
+          multiple
+          accept="image/*,video/*"
+        />
+        <div class="canvas-hint">
+          空格拖动画板 <span>·</span> ⌘ / Ctrl + 滚轮缩放
         </div>
       </main>
+      <section id="story-panel" hidden>
+        <div class="story-heading">
+          <div>
+            <span class="tiny-label">STORYBOARD</span>
+            <h1>镜头，一步步成形。</h1>
+            <p>挑选采用版本，再按故事的顺序组织它们。</p>
+          </div>
+          <button id="story-new-shot" class="primary">＋ 新建镜头</button>
+        </div>
+        <div id="story-grid"></div>
+      </section>
     </div>
-    <footer class="shot-strip">
+    <footer class="shot-strip" hidden>
       <div class="shot-label">
-        <span class="tiny-label">STORY ORDER</span><strong>镜头顺序</strong
-        ><button id="new-shot">＋ 镜头</button>
+        <strong>镜头顺序</strong><button id="new-shot">＋ 镜头</button>
       </div>
       <div id="shots"></div>
-      <span class="shot-note">移动节点不改变镜头顺序</span>
+      <span class="shot-note">位置自由，叙事有序。</span
+      ><button id="close-shots" aria-label="收起镜头条">⌄</button>
     </footer>
     <div id="toast" role="status" hidden></div>
     <div id="mention-menu" class="floating-menu" hidden></div>
     <div id="connect-menu" class="floating-menu" hidden></div>
-    <dialog id="library-dialog">
+    <dialog id="help-dialog">
+      <header>
+        <h2>让创作顺手一点</h2>
+        <button data-close aria-label="关闭">×</button>
+      </header>
+      <dl class="shortcut-list">
+        <dt>平移画板</dt>
+        <dd>空格 + 拖动 / 双指滑动</dd>
+        <dt>缩放</dt>
+        <dd>⌘ / Ctrl + 滚轮</dd>
+        <dt>创建图片 / 视频 / 文本</dt>
+        <dd>I / V / T</dd>
+        <dt>多选</dt>
+        <dd>Shift + 点选 / 拖动框选</dd>
+        <dt>复制 / 粘贴节点</dt>
+        <dd>⌘ / Ctrl + C / V</dd>
+        <dt>撤销 / 重做</dt>
+        <dd>⌘ / Ctrl + Z / Shift + Z</dd>
+        <dt>预览结果</dt>
+        <dd>双击图片 / 节点工具栏</dd>
+        <dt>引用素材</dt>
+        <dd>@ / 拖线 / 拖入参考区</dd>
+      </dl>
+    </dialog>
+    <dialog id="library-dialog" aria-label="素材与节点">
       <header>
         <div>
-          <span class="tiny-label">ASSET LIBRARY</span>
-          <h2>让好素材继续生长。</h2>
+          <span class="tiny-label">YOUR ASSETS</span>
+          <h2>素材与节点</h2>
         </div>
-        <button data-close>×</button>
+        <button data-close aria-label="关闭">×</button>
       </header>
+      <div class="asset-tabs" role="tablist" aria-label="素材范围">
+        <button role="tab" data-asset-scope="board" aria-selected="true">
+          当前画板
+        </button>
+        <button role="tab" data-asset-scope="library" aria-selected="false">
+          素材库
+        </button>
+      </div>
       <div class="library-controls">
-        <input id="asset-search" placeholder="搜索名称 / 提示词" /><select
-          id="asset-kind"
-        >
+        <input
+          id="asset-search"
+          placeholder="搜索素材"
+          aria-label="搜索素材"
+        /><select id="asset-kind" aria-label="素材类型">
           <option value="">全部类型</option>
           <option value="image">图片</option>
           <option value="video">视频</option>
@@ -147,15 +281,29 @@
     <dialog id="task-dialog">
       <header>
         <h2>任务中心</h2>
-        <button data-close>×</button>
+        <button data-close aria-label="关闭">×</button>
       </header>
       <p>关闭画板页面不影响本机服务中的任务；请保持服务运行。</p>
       <div id="task-list"></div>
     </dialog>
+    <dialog id="version-dialog">
+      <header>
+        <div>
+          <span class="tiny-label">GENERATION RECORD</span>
+          <h2>版本记录</h2>
+        </div>
+        <button data-close aria-label="关闭">×</button>
+      </header>
+      <div id="version-content"></div>
+      <footer>
+        <small>参数与参考素材保留生成时的版本。</small
+        ><button id="download-version">下载记录</button>
+      </footer>
+    </dialog>
     <dialog id="preview-dialog">
       <header>
         <h2 id="preview-title">结果预览</h2>
-        <button data-close>×</button>
+        <button data-close aria-label="关闭">×</button>
       </header>
       <div id="preview-content"></div>
     </dialog>
@@ -163,7 +311,7 @@
       <form id="edit-form">
         <header>
           <h2 id="edit-title"></h2>
-          <button type="button" data-close>×</button>
+          <button type="button" data-close aria-label="关闭">×</button>
         </header>
         <div id="edit-fields"></div>
         <footer>

@@ -17,6 +17,76 @@ const button = (label, fn, cls) => {
 };
 const uid = () => crypto.randomUUID();
 const clone = (value) => structuredClone(value);
+const NODE_WIDTH = 360;
+const ICONS = {
+  image:
+    '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 16 5-5 4 4 4-3 5 5"/>',
+  video:
+    '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="m10 8 6 4-6 4Z"/>',
+  play: '<path d="m8 5 11 7-11 7Z"/>',
+  text: '<path d="M4 5h16M12 5v15M8 20h8M4 5v3M20 5v3"/>',
+  upload: '<path d="M12 16V3m-4 4 4-4 4 4M4 15v5h16v-5"/>',
+  library:
+    '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+  sliders:
+    '<path d="M5 3v5m0 4v9M12 3v10m0 4v4M19 3v2m0 4v12"/><path d="M2 8h6v4H2zm7 5h6v4H9zm7-8h6v4h-6z"/>',
+  undo: '<path d="M9 5 3 10l6 5M3 10h10a7 7 0 0 1 7 7v2"/>',
+  redo: '<path d="m15 5 6 5-6 5m6-5H11a7 7 0 0 0-7 7v2"/>',
+  fit: '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><rect x="8" y="8" width="8" height="8" rx="1"/>',
+  locate:
+    '<circle cx="12" cy="12" r="6"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/>',
+  map: '<path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2ZM9 3v16M15 5v16"/>',
+  link: '<path d="m9 15 6-6m-6 9-1.5 1.5a4.2 4.2 0 0 1-6-6L6 9a4.2 4.2 0 0 1 6 0m0 6a4.2 4.2 0 0 0 6 0l4.5-4.5a4.2 4.2 0 0 0-6-6L15 6"/>',
+  group:
+    '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><rect x="7" y="7" width="10" height="10" rx="1"/>',
+  check: '<path d="m5 12 4 4L20 5"/>',
+  edit: '<path d="m14 5 5 5M4 20l5-1L21 7l-5-5L4 14Z"/>',
+  frame:
+    '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4m10 0h4M3 15h4m10 0h4"/>',
+};
+function icon(name) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("aria-hidden", "true");
+  svg.innerHTML = ICONS[name] || ICONS.image;
+  return svg;
+}
+function iconButton(label, name, fn) {
+  const b = button("", fn);
+  b.append(icon(name), make("span", "", label));
+  return b;
+}
+function actionMenu(label, entries, cls) {
+  const details = make("details", cls);
+  const summary = make("summary", "", "···");
+  summary.setAttribute("aria-label", label);
+  const content = make("div", "dropdown");
+  entries.forEach(([text, fn]) =>
+    content.append(
+      button(
+        text,
+        () => {
+          details.open = false;
+          return fn();
+        },
+        "menu-item",
+      ),
+    ),
+  );
+  details.append(summary, content);
+  return details;
+}
+function syncSelection() {
+  document.querySelectorAll(".node").forEach((el) => {
+    el.classList.toggle("selected", selected.has(el.dataset.id));
+    el.classList.toggle(
+      "focused",
+      selected.size === 1 && selected.has(el.dataset.id),
+    );
+  });
+}
 const MODELS = {
   "lingganya-gpt-image-2.5-sunburst-special": {
     name: "GPT Image 2.5 · Sunburst Special",
@@ -34,7 +104,7 @@ const MODELS = {
     resolutions: [],
     images: 8,
     videos: 0,
-    hint: "沿用现有 Seedream 5.0 Pro 接入",
+    hint: "支持多图参考 · 2K 画质",
   },
   "seedream43-ark-direct": {
     name: "Seedream 4.3 · 2K",
@@ -43,7 +113,7 @@ const MODELS = {
     resolutions: [],
     images: 8,
     videos: 0,
-    hint: "沿用现有 Seedream 4.3 接入",
+    hint: "支持多图参考 · 2K 画质",
   },
   "lingganya-sd-2.0-mini": {
     name: "SD 2.0 Mini · 720p",
@@ -141,7 +211,7 @@ function touch() {
   if (loadFailed) return;
   dirty = true;
   changed++;
-  $("#save-state").textContent = "未保存 · 正在同步";
+  $("#save-state").textContent = "保存中…";
   journal();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(save, 550);
@@ -160,10 +230,15 @@ async function save() {
     if (changed === serial) {
       dirty = false;
       localStorage.removeItem("studio-board-draft");
-      $("#save-state").textContent = "✓ 已保存到本机";
+      $("#save-state").textContent = "已保存";
+      $("#save-notice").hidden = true;
     } else journal();
   } catch (e) {
-    $("#save-state").textContent = "保存失败 · 请导出备份";
+    $("#save-state").textContent = "尚未保存";
+    $("#save-notice").hidden = false;
+    $("#save-notice-message").textContent = e.message.includes("另一个窗口")
+      ? "另一个窗口更新了画板，当前修改已保留在浏览器。"
+      : "暂时无法保存，当前修改已保留在浏览器。";
     toast(e.message);
     if (e.message.includes("另一个窗口")) loadFailed = true;
   } finally {
@@ -178,6 +253,11 @@ function checkpoint() {
   );
   if (undoStack.length > 60) undoStack.shift();
   redoStack = [];
+  updateHistoryControls();
+}
+function updateHistoryControls() {
+  $("#undo").disabled = !undoStack.length;
+  $("#redo").disabled = !redoStack.length;
 }
 function history(from, to) {
   if (!from.length) return;
@@ -240,6 +320,10 @@ function renderNavigation() {
     }),
   );
   $("#board-title").textContent = board().name;
+  $("#board-caption").textContent = board().name;
+  $("#node-count").textContent = board().nodes.length
+    ? `${board().nodes.length} 个节点`
+    : "";
 }
 function hiddenNode(n) {
   return board().nodes.some(
@@ -249,6 +333,7 @@ function hiddenNode(n) {
 function render() {
   if (!board()) return;
   renderNavigation();
+  updateHistoryControls();
   $("#nodes").replaceChildren(
     ...board()
       .nodes.filter((n) => !hiddenNode(n))
@@ -257,7 +342,8 @@ function render() {
   $("#empty").hidden = board().nodes.length > 0;
   applyView();
   drawEdges();
-  renderShots();
+  renderShots(true);
+  if ($("#library-dialog").open) renderAssets();
 }
 function applyView() {
   const v = board().view;
@@ -287,7 +373,7 @@ function createNode(type, position = centerPoint(), overrides = {}) {
         Math.abs(n.y - position.y) < 400,
     )
   )
-    position.x += 370;
+    position.x += 430;
   checkpoint();
   const profile = Object.keys(MODELS).find((k) => MODELS[k].kind === type);
   const m = MODELS[profile];
@@ -319,14 +405,13 @@ function createNode(type, position = centerPoint(), overrides = {}) {
   selected = new Set([n.id]);
   touch();
   render();
+  requestAnimationFrame(() => ensureNodeVisible(n));
   return n;
 }
 function selectNode(id, add = false) {
   if (!add) selected.clear();
-  selected.has(id) && add ? selected.delete(id) : selected.add(id);
-  document
-    .querySelectorAll(".node")
-    .forEach((e) => e.classList.toggle("selected", selected.has(e.dataset.id)));
+  if (id) selected.has(id) && add ? selected.delete(id) : selected.add(id);
+  syncSelection();
   drawEdges();
 }
 function selector(options, value, fn, cls) {
@@ -341,54 +426,76 @@ function selector(options, value, fn, cls) {
   return e;
 }
 function renderNode(n) {
+  const focused = selected.size === 1 && selected.has(n.id);
+  const hasResult = !!n.versions?.length;
+  const current = tasks
+    .filter((t) => t.node_id === n.id && t.board_id === boardId)
+    .sort((a, b) => b.created_at - a.created_at)[0];
   const el = make(
     "article",
     "node" +
       (selected.has(n.id) ? " selected" : "") +
+      (focused ? " focused" : "") +
+      (hasResult ? " has-result" : "") +
       (n.type === "group" ? " group-node" : "") +
       (n.type === "text" ? " text-node" : "") +
       (n.source ? " source" : ""),
   );
   el.dataset.id = n.id;
   el.dataset.signature = nodeSignature(n);
+  el.setAttribute("aria-label", n.name);
   el.style.left = n.x + "px";
   el.style.top = n.y + "px";
-  if (n.type === "group") {
-    el.style.width = (n.width || 720) + "px";
-    el.style.height = (n.collapsed ? 60 : n.height || 520) + "px";
-  }
   const header = make("header", "node-header");
-  header.append(
-    make(
-      "span",
-      "node-type",
-      { image: "▧", video: "▷", text: "T", group: "▱" }[n.type],
-    ),
-  );
+  const type = make("span", "node-type");
+  type.append(icon(n.type === "group" ? "group" : n.type));
   const title = make("span", "node-name", n.name);
   title.title = n.name;
-  header.append(
-    title,
-    button("···", () => editNode(n)),
-    button("×", () => removeNodes([n.id])),
+  const settings = actionMenu(
+    "节点菜单",
+    [
+      ["重命名与设置", () => editNode(n)],
+      [
+        "复制节点",
+        () => {
+          copyBuffer = [clone(n)];
+          duplicate();
+        },
+      ],
+      ["移除节点", () => removeNodes([n.id])],
+    ],
+    "node-menu",
   );
+  header.append(type, title, settings);
   el.append(header);
   header.addEventListener("pointerdown", (e) => startMove(e, n));
   el.addEventListener("pointerdown", (e) => {
     if (pickTarget && n.id !== pickTarget) {
       e.preventDefault();
       e.stopPropagation();
-      addReference(node(pickTarget), n);
-      endPick();
+      try {
+        addReference(node(pickTarget), n);
+        endPick();
+      } catch (error) {
+        report(error);
+      }
       return;
     }
     if (
-      !e.target.closest("button,input,textarea,select,video,a") &&
-      !selected.has(n.id)
+      !e.target.closest(
+        "button,input,textarea,select,video,a,summary,details",
+      ) &&
+      !pickTarget
     )
-      selectNode(n.id, e.shiftKey);
+      startMove(e, n);
+  });
+  el.addEventListener("dblclick", (e) => {
+    if (!e.target.closest("button,input,textarea,select,video,a,summary,img"))
+      focusNodes([n]);
   });
   if (n.type === "group") {
+    el.style.width = (n.width || 720) + "px";
+    el.style.height = (n.collapsed ? 60 : n.height || 520) + "px";
     header.append(
       button(n.collapsed ? "展开" : "折叠", () => {
         checkpoint();
@@ -405,13 +512,161 @@ function renderNode(n) {
   output.addEventListener("pointerdown", (e) => startConnection(e, n));
   el.append(output, make("span", "port in"));
   const body = make("div", "node-body");
+  if (!hasResult && n.type !== "text") {
+    const placeholder = make("div", "node-placeholder");
+    placeholder.append(
+      icon(n.type),
+      make("strong", "", n.type === "video" ? "视频生成" : "图片生成"),
+      make("small", "", n.prompt || "选中节点，开始描述你的画面"),
+    );
+    body.append(placeholder);
+    if (current) {
+      const state = make(
+        "span",
+        "node-state" + (current.status === "failed" ? " error" : ""),
+        statusName(current.status),
+      );
+      body.append(state);
+    }
+  }
+  if (hasResult) {
+    const v = version(n);
+    const media = make(v.kind === "video" ? "video" : "img", "node-media");
+    media.src =
+      v.kind === "video" ? mediaURL(v) : thumb({ ...v, url: mediaURL(v) });
+    if (v.kind === "video") {
+      media.controls = true;
+      media.preload = "metadata";
+      media.muted = true;
+      media.playsInline = true;
+      media.addEventListener("pointerdown", (e) => {
+        if (pickTarget) return;
+        if (!selected.has(n.id) || e.shiftKey) selectNode(n.id, e.shiftKey);
+      });
+    } else {
+      media.alt = n.name;
+      media.loading = "lazy";
+      media.addEventListener("dblclick", (e) => {
+        e.stopPropagation();
+        previewVersions([v]);
+      });
+    }
+    body.append(media);
+    const versions = make("div", "version-row");
+    if (n.source && n.versions.length === 1)
+      versions.append(
+        make("span", "", v.kind === "video" ? "视频素材" : "图片素材"),
+      );
+    else
+      versions.append(
+        selector(
+          n.versions.map((item, i) => [
+            item.id,
+            `版本 ${String(i + 1).padStart(2, "0")} · ${new Date(item.createdAt || Date.now()).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}`,
+          ]),
+          v.id,
+          (value) => {
+            checkpoint();
+            n.currentVersion = value;
+            touch();
+            render();
+          },
+          "version-picker",
+        ),
+      );
+    if (n.adopted === v.id)
+      versions.append(make("span", "adopted-badge", "✓ 已采用"));
+    else if (
+      current &&
+      ["queued", "running", "paused"].includes(current.status)
+    )
+      versions.append(
+        make("span", "adopted-badge", statusName(current.status)),
+      );
+    else
+      versions.append(
+        make(
+          "span",
+          "",
+          n.source ? "可复用素材" : `${n.versions.length} 个版本`,
+        ),
+      );
+    body.append(versions);
+    const actions = make("div", "result-actions");
+    if (v.kind === "image")
+      actions.append(
+        iconButton("修改图片", "edit", () => derive(n, "image")),
+        iconButton("生成视频", "video", () => derive(n, "video")),
+      );
+    else
+      actions.append(
+        iconButton("提取尾帧", "frame", () => extractFrame(n, "last")),
+        iconButton("尾帧续接", "link", () => extractFrame(n, "last", 0, true)),
+      );
+    actions.append(iconButton("采用", "check", () => adopt(n, v)));
+    const extra = [
+      ["放大预览", () => previewVersions([v])],
+      ["比较最近版本", () => previewVersions(n.versions.slice(-4))],
+      ["查看生成参数", () => versionDetails(v)],
+    ];
+    if (v.kind === "video")
+      extra.push(
+        ["提取首帧", () => extractFrame(n, "first")],
+        ["提取当前帧", () => extractFrame(n, "current", media.currentTime)],
+        [
+          "前移一帧",
+          () => (media.currentTime = Math.max(0, media.currentTime - 1 / 30)),
+        ],
+        [
+          "后移一帧",
+          () =>
+            (media.currentTime = Math.min(
+              media.duration,
+              media.currentTime + 1 / 30,
+            )),
+        ],
+      );
+    extra.push([
+      "下载原文件",
+      () =>
+        download(mediaURL(v), n.name + (v.kind === "video" ? ".mp4" : ".png")),
+    ]);
+    actions.append(actionMenu("更多操作", extra, "more-actions"));
+    body.append(actions);
+    if (v.sourceFrame)
+      body.append(
+        button(
+          `来源：${v.sourceFrame.name} · ${v.sourceFrame.time.toFixed(3)}s`,
+          () =>
+            node(v.sourceFrame.nodeId)
+              ? focusNodes([node(v.sourceFrame.nodeId)])
+              : previewVersions([v.sourceFrame.version]),
+          "subtle frame-source",
+        ),
+      );
+  }
   if (!n.source) {
-    const prompt = make("textarea", "");
+    const editor = make("div", "generation-editor");
+    const heading = make("div", "editor-heading");
+    heading.append(
+      make(
+        "span",
+        "",
+        n.type === "text"
+          ? "文字与剧本"
+          : n.type === "video"
+            ? "下一段，如何发生？"
+            : "描述你想要的画面",
+      ),
+      make("span", "", n.type === "text" ? "自由记录" : ""),
+    );
+    editor.append(heading);
+    const prompt = make("textarea");
     prompt.value = n.prompt;
     prompt.placeholder =
       n.type === "text"
-        ? "写下剧本、角色设定或场景描述…"
-        : "描述这个镜头… 输入 @ 引用画板素材";
+        ? "记录剧本、角色设定或镜头想法…"
+        : "输入提示词，用 @ 引用角色、场景或上一镜头…";
     prompt.setAttribute("aria-label", n.name + " 提示词");
     prompt.addEventListener("focus", () => checkpoint());
     prompt.addEventListener("input", () => {
@@ -421,58 +676,79 @@ function renderNode(n) {
     });
     prompt.addEventListener("keydown", (e) => {
       if (e.key === "Escape") $("#mention-menu").hidden = true;
+      if (e.key === "ArrowDown" && !$("#mention-menu").hidden) {
+        e.preventDefault();
+        $("#mention-menu button")?.focus();
+      }
     });
-    body.append(prompt);
+    if (n.type !== "text") {
+      const mention = button(
+        "@ 引用素材",
+        () => showMentions(n, prompt, true),
+        "mention-trigger",
+      );
+      heading.lastChild.replaceWith(mention);
+    }
+    editor.append(prompt);
     if (n.type !== "text") {
       const refs = make("div", "reference-list");
+      refs.setAttribute("aria-label", "参考素材");
       refs.addEventListener("dragover", (e) => e.preventDefault());
       refs.addEventListener("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
         const id = e.dataTransfer.getData("application/studio-node");
-        if (node(id)) addReference(n, node(id));
+        if (node(id)) {
+          try {
+            addReference(n, node(id));
+          } catch (error) {
+            report(error);
+          }
+        }
       });
       for (const ref of n.refs || []) {
         const chip = make("div", "ref-chip");
         if (ref.kind === "image") {
           const img = make("img");
           img.src = thumb(ref);
+          img.alt = "";
           chip.append(img);
         }
-        chip.append(
-          button("@" + ref.name, () => {
-            if (node(ref.nodeId)) focusNodes([node(ref.nodeId)]);
-            else previewVersions([ref]);
-          }),
-        );
+        const locate = button("@" + ref.name, () => {
+          if (node(ref.nodeId)) focusNodes([node(ref.nodeId)]);
+          else previewVersions([ref]);
+        });
+        locate.title = ref.name + " · 固定引用此版本";
+        chip.append(locate);
         const roles =
           ref.kind === "text"
             ? ["文本上下文"]
             : ref.kind === "video"
               ? ["动作参考", "运镜参考"]
               : ["图片参考", "角色参考", "场景参考", "风格参考", "构图参考"];
-        chip.append(
-          selector(
-            roles.map((x) => [x, x]),
-            ref.role,
-            (val) => {
-              checkpoint();
-              ref.role = val;
-              touch();
-            },
-          ),
-          button("×", () => {
+        const role = selector(
+          roles.map((x) => [x, x]),
+          ref.role,
+          (val) => {
             checkpoint();
-            n.refs = n.refs.filter((r) => r !== ref);
+            ref.role = val;
             touch();
-            render();
-          }),
+          },
         );
+        role.setAttribute("aria-label", ref.name + " 引用用途");
+        const remove = button("×", () => {
+          checkpoint();
+          n.refs = n.refs.filter((r) => r !== ref);
+          touch();
+          render();
+        });
+        remove.setAttribute("aria-label", "移除引用 " + ref.name);
+        chip.append(role, remove);
         refs.append(chip);
       }
       refs.append(
         button(
-          "＋ 添加参考",
+          "＋ 参考素材",
           () => {
             pickTarget = n.id;
             $("#reference-mode").hidden = false;
@@ -480,53 +756,57 @@ function renderNode(n) {
           "add-ref",
         ),
       );
-      body.append(refs);
+      editor.append(refs);
       const params = make("div", "params");
-      params.append(
-        selector(
-          Object.entries(MODELS)
-            .filter(([, m]) => m.kind === n.type)
-            .map(([k, m]) => [k, m.name]),
-          n.profile,
-          (val) => {
-            checkpoint();
-            n.profile = val;
-            const m = MODELS[val];
-            n.ratio = m.ratios[0] || "";
-            n.resolution = m.resolutions[0] || "";
-            n.duration = String(m.durations?.[0] || 5);
-            touch();
-            render();
-          },
-          "model",
-        ),
+      const model = selector(
+        Object.entries(MODELS)
+          .filter(([, m]) => m.kind === n.type)
+          .map(([key, m]) => [key, m.name]),
+        n.profile,
+        (value) => {
+          checkpoint();
+          n.profile = value;
+          const m = MODELS[value];
+          n.ratio = m.ratios[0] || "";
+          n.resolution = m.resolutions[0] || "";
+          n.duration = String(m.durations?.[0] || 5);
+          touch();
+          render();
+        },
+        "model",
       );
+      model.setAttribute("aria-label", "生成模型");
+      params.append(model);
       const m = MODELS[n.profile];
-      for (const [key, values] of [
-        ["ratio", m?.ratios],
-        ["resolution", m?.resolutions],
-        ["duration", m?.durations],
+      for (const [key, values, label] of [
+        ["ratio", m?.ratios, "画幅"],
+        ["resolution", m?.resolutions, "分辨率"],
+        ["duration", m?.durations, "时长"],
       ])
-        if (values?.length)
-          params.append(
-            selector(
-              values.map((v) => [v, key === "duration" ? v + " 秒" : v]),
-              n[key],
-              (val) => {
-                checkpoint();
-                n[key] = val;
-                touch();
-                render();
-              },
-            ),
+        if (values?.length) {
+          const option = selector(
+            values.map((value) => [
+              value,
+              key === "duration" ? value + " 秒" : value,
+            ]),
+            n[key],
+            (value) => {
+              checkpoint();
+              n[key] = value;
+              touch();
+              render();
+            },
           );
-      body.append(params);
+          option.setAttribute("aria-label", label);
+          params.append(option);
+        }
+      editor.append(params);
       const incompat = compatibility(n);
-      if (incompat) body.append(make("div", "status error", incompat));
-      else body.append(make("div", "hint", m?.hint || "请选择可用模型"));
-      const current = tasks
-        .filter((t) => t.node_id === n.id && t.board_id === boardId)
-        .sort((a, b) => b.created_at - a.created_at)[0];
+      if (incompat) editor.append(make("div", "status error", incompat));
+      else {
+        const hint = make("div", "hint", m?.hint || "请选择模型");
+        editor.append(hint);
+      }
       const busy =
         pending.has(n.id) ||
         (current && ["queued", "running", "paused"].includes(current.status));
@@ -544,11 +824,11 @@ function renderNode(n) {
           "primary",
         ),
       );
-      if (busy && current?.status !== "paused") gen.lastChild.disabled = true;
-      if (incompat) gen.lastChild.disabled = true;
-      body.append(gen);
-      if (current)
-        body.append(
+      if ((busy && current?.status !== "paused") || incompat)
+        gen.lastChild.disabled = true;
+      editor.append(gen);
+      if (current && current.status !== "completed")
+        editor.append(
           make(
             "div",
             "status" + (current.status === "failed" ? " error" : ""),
@@ -557,109 +837,29 @@ function renderNode(n) {
           ),
         );
     }
-  }
-  if (n.versions?.length) {
-    body.append(
-      selector(
-        n.versions.map((v, i) => [
-          v.id,
-          `${n.source ? "素材" : "版本 " + (i + 1)} · ${new Date(v.createdAt || Date.now()).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}${v.id === n.adopted ? " · 已采用" : ""}`,
-        ]),
-        version(n).id,
-        (val) => {
-          checkpoint();
-          n.currentVersion = val;
-          touch();
-          render();
-        },
-        "version-picker",
-      ),
-    );
-    const v = version(n);
-    const media = make(v.kind === "video" ? "video" : "img", "node-media");
-    media.src =
-      v.kind === "video" ? mediaURL(v) : thumb({ ...v, url: mediaURL(v) });
-    if (v.kind === "video") {
-      media.controls = true;
-      media.preload = "metadata";
-      media.muted = true;
-      media.playsInline = true;
-    } else {
-      media.alt = n.name;
-      media.loading = "lazy";
-      media.addEventListener("click", () => previewVersions([v]));
-    }
-    body.append(media);
-    const actions = make("div", "result-actions");
-    actions.append(
-      button("预览", () => previewVersions([v])),
-      button("采用", () => adopt(n, v)),
-      button("对比", () => previewVersions(n.versions.slice(-4))),
-      button("参数", () => versionDetails(v)),
-    );
-    if (v.kind === "image")
-      actions.append(
-        button("修改图片", () => derive(n, "image")),
-        button("生成视频", () => derive(n, "video")),
-      );
-    if (v.kind === "video")
-      actions.append(
-        button("提取首帧", () => extractFrame(n, "first")),
-        button("当前帧", () => extractFrame(n, "current", media.currentTime)),
-        button("提取尾帧", () => extractFrame(n, "last")),
-        button("尾帧续接", () => extractFrame(n, "last", 0, true)),
-        button(
-          "−1 帧",
-          () => (media.currentTime = Math.max(0, media.currentTime - 1 / 30)),
-        ),
-        button(
-          "+1 帧",
-          () =>
-            (media.currentTime = Math.min(
-              media.duration,
-              media.currentTime + 1 / 30,
-            )),
-        ),
-      );
-    actions.append(
-      button("下载", () =>
-        download(mediaURL(v), n.name + (v.kind === "video" ? ".mp4" : ".png")),
-      ),
-    );
-    body.append(actions);
-    if (v.sourceFrame)
-      body.append(
-        button(
-          `截自 ${v.sourceFrame.name} · ${v.sourceFrame.time.toFixed(3)}s`,
-          () =>
-            node(v.sourceFrame.nodeId)
-              ? focusNodes([node(v.sourceFrame.nodeId)])
-              : previewVersions([v.sourceFrame.version]),
-          "subtle",
-        ),
-      );
+    body.append(editor);
   }
   el.append(body);
   const footer = make("footer", "node-footer");
-  footer.append(
-    selector(
-      [
-        ["", "未关联镜头"],
-        ...board().shots.map((s, i) => [
-          s.id,
-          `${String(i + 1).padStart(2, "0")} · ${s.name}`,
-        ]),
-      ],
-      n.shotId,
-      (id) => {
-        checkpoint();
-        n.shotId = id;
-        touch();
-        renderShots();
-      },
-    ),
+  const shot = selector(
+    [
+      ["", "关联镜头"],
+      ...board().shots.map((s, i) => [
+        s.id,
+        `${String(i + 1).padStart(2, "0")} · ${s.name}`,
+      ]),
+    ],
+    n.shotId,
+    (id) => {
+      checkpoint();
+      n.shotId = id;
+      touch();
+      renderShots();
+    },
   );
-  const drag = make("span", "drag-ref", "拖到参考区 ↗");
+  shot.setAttribute("aria-label", "关联镜头");
+  footer.append(shot);
+  const drag = make("span", "drag-ref", "拖出作为参考 ↗");
   drag.draggable = true;
   drag.addEventListener("dragstart", (e) =>
     e.dataTransfer.setData("application/studio-node", n.id),
@@ -742,9 +942,9 @@ function endPick() {
   pickTarget = null;
   $("#reference-mode").hidden = true;
 }
-function showMentions(n, input) {
+function showMentions(n, input, browse = false) {
   const before = input.value.slice(0, input.selectionStart),
-    match = before.match(/@([^@\s]*)$/);
+    match = before.match(/@([^@\s]*)$/) || (browse ? ["", ""] : null);
   const menu = $("#mention-menu");
   if (!match) {
     menu.hidden = true;
@@ -767,7 +967,29 @@ function showMentions(n, input) {
         replacement +
         input.value.slice(cursor);
       addReference(n, source);
+      touch();
+      render();
       menu.hidden = true;
+      const editor = $("#nodes").querySelector(`[data-id="${n.id}"] textarea`);
+      if (editor) {
+        editor.focus({ preventScroll: true });
+        const next = cursor - match[0].length + replacement.length;
+        editor.setSelectionRange(next, next);
+      }
+    });
+    b.addEventListener("keydown", (e) => {
+      if (["ArrowDown", "ArrowUp"].includes(e.key)) {
+        e.preventDefault();
+        const candidates = [...menu.querySelectorAll("button")],
+          index = candidates.indexOf(b);
+        candidates[
+          (index + (e.key === "ArrowDown" ? 1 : -1) + candidates.length) %
+            candidates.length
+        ]?.focus();
+      } else if (e.key === "Escape") {
+        menu.hidden = true;
+        input.focus({ preventScroll: true });
+      }
     });
     const v = version(source);
     if (v?.kind === "image") {
@@ -794,14 +1016,18 @@ function drawEdges() {
   svg.replaceChildren();
   for (const n of board().nodes) {
     if (hiddenNode(n)) continue;
-    for (const ref of n.refs || []) {
+    const sourceFrame = version(n)?.sourceFrame;
+    const links = [...(n.refs || [])];
+    if (sourceFrame && !links.some((r) => r.nodeId === sourceFrame.nodeId))
+      links.push({ nodeId: sourceFrame.nodeId, extracted: true });
+    for (const ref of links) {
       const source = node(ref.nodeId);
       if (!source || hiddenNode(source)) continue;
       const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      const x = source.x + 320,
-        y = source.y + 30,
+      const x = source.x + NODE_WIDTH,
+        y = source.y + 110,
         tx = n.x,
-        ty = n.y + 30;
+        ty = n.y + 110;
       const dx = Math.max(80, Math.abs(tx - x) / 2);
       p.setAttribute(
         "d",
@@ -810,6 +1036,7 @@ function drawEdges() {
       p.setAttribute(
         "class",
         "edge" +
+          (ref.extracted ? " extracted" : "") +
           (selected.has(n.id) || selected.has(source.id) ? " highlight" : ""),
       );
       svg.append(p);
@@ -825,16 +1052,16 @@ function drawMini() {
   if (!ns.length) return;
   const minX = Math.min(...ns.map((n) => n.x)),
     minY = Math.min(...ns.map((n) => n.y)),
-    maxX = Math.max(...ns.map((n) => n.x + 320)),
+    maxX = Math.max(...ns.map((n) => n.x + NODE_WIDTH)),
     maxY = Math.max(...ns.map((n) => n.y + 350)),
     scale = Math.min(160 / (maxX - minX || 1), 90 / (maxY - minY || 1));
   for (const n of ns) {
     const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
     r.setAttribute("x", 10 + (n.x - minX) * scale);
     r.setAttribute("y", 10 + (n.y - minY) * scale);
-    r.setAttribute("width", Math.max(4, 320 * scale));
+    r.setAttribute("width", Math.max(4, NODE_WIDTH * scale));
     r.setAttribute("height", Math.max(3, 260 * scale));
-    r.setAttribute("fill", selected.has(n.id) ? "#df643f" : "#b7c4a8");
+    r.setAttribute("fill", selected.has(n.id) ? "var(--accent)" : "#77867c");
     r.addEventListener("click", (e) => {
       e.stopPropagation();
       focusNodes([n]);
@@ -842,12 +1069,47 @@ function drawMini() {
     mini.append(r);
   }
 }
+function ensureNodeVisible(n) {
+  if (!n || selected.size !== 1 || !selected.has(n.id) || $("#viewport").hidden)
+    return;
+  const el = $("#nodes").querySelector(`[data-id="${n.id}"]`);
+  if (!el) return;
+  const viewport = $("#viewport").getBoundingClientRect();
+  const r = el.getBoundingClientRect(),
+    v = board().view;
+  const top = viewport.top + 155,
+    bottom = viewport.bottom - 115;
+  const left = $("#library-dialog").open ? 350 : 35;
+  const upper = r.top - (n.versions?.length ? 80 : 35) * v.z;
+  if (r.height + 80 * v.z > bottom - top) {
+    focusNodes([n]);
+    return;
+  }
+  const dx =
+    r.left < left
+      ? left - r.left
+      : r.right > viewport.right - 35
+        ? viewport.right - 35 - r.right
+        : 0;
+  const dy =
+    upper < top ? top - upper : r.bottom > bottom ? bottom - r.bottom : 0;
+  if (dx || dy) {
+    v.x += dx;
+    v.y += dy;
+    applyView();
+    touch();
+  }
+}
 function focusNodes(ns) {
   if (!ns.length) return;
   const r = $("#viewport").getBoundingClientRect();
   const left = Math.min(...ns.map((n) => n.x)),
-    top = Math.min(...ns.map((n) => n.y)),
-    right = Math.max(...ns.map((n) => n.x + (n.width || 320))),
+    top = Math.min(
+      ...ns.map(
+        (n) => n.y - (selected.has(n.id) && n.versions?.length ? 85 : 40),
+      ),
+    ),
+    right = Math.max(...ns.map((n) => n.x + (n.width || NODE_WIDTH))),
     bottom = Math.max(
       ...ns.map(
         (n) =>
@@ -862,14 +1124,14 @@ function focusNodes(ns) {
       0.15,
       Math.min(
         (r.width - 100) / (right - left),
-        (r.height - 150) / (bottom - top),
+        (r.height - 250) / (bottom - top),
       ),
     ),
   );
   board().view = {
     z,
     x: (r.width - (right - left) * z) / 2 - left * z,
-    y: (r.height - (bottom - top) * z) / 2 - top * z + 20,
+    y: 130 + (r.height - 250 - (bottom - top) * z) / 2 - top * z,
   };
   applyView();
   touch();
@@ -887,11 +1149,18 @@ function zoom(factor, x, y) {
   touch();
 }
 function startMove(e, n) {
-  if (e.button !== 0 || e.target.closest("button") || space) return;
+  if (
+    e.button !== 0 ||
+    e.target.closest("button,summary,details") ||
+    space ||
+    pickTarget
+  )
+    return;
   e.stopPropagation();
+  if (!selected.has(n.id) || e.shiftKey) selectNode(n.id, e.shiftKey);
+  if (!selected.has(n.id)) return;
   window.dragging = true;
-  if (!selected.has(n.id)) selectNode(n.id, e.shiftKey);
-  checkpoint();
+  let moved = false;
   const start = { x: e.clientX, y: e.clientY };
   const ids = new Set(selected);
   for (const id of selected) {
@@ -903,6 +1172,12 @@ function startMove(e, n) {
     .filter(Boolean)
     .map((n) => ({ n, x: n.x, y: n.y }));
   const move = (ev) => {
+    if (!moved && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 4)
+      return;
+    if (!moved) {
+      checkpoint();
+      moved = true;
+    }
     const dx = (ev.clientX - start.x) / board().view.z,
       dy = (ev.clientY - start.y) / board().view.z;
     initial.forEach(({ n, x, y }) => {
@@ -920,7 +1195,8 @@ function startMove(e, n) {
     window.dragging = false;
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
-    touch();
+    if (moved) touch();
+    else if (selected.size === 1) ensureNodeVisible(n);
   };
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up);
@@ -935,7 +1211,7 @@ function startConnection(e, source) {
     const p = worldPoint(ev.clientX, ev.clientY);
     ghost.setAttribute(
       "d",
-      `M${source.x + 320},${source.y + 30} L${p.x},${p.y}`,
+      `M${source.x + NODE_WIDTH},${source.y + 110} L${p.x},${p.y}`,
     );
   };
   const up = (ev) => {
@@ -992,7 +1268,7 @@ function removeNodes(ids = [...selected]) {
   render();
   toast("已移除画板节点，源素材与下游版本引用仍保留；可撤销");
 }
-function derive(source, type, point = { x: source.x + 390, y: source.y }) {
+function derive(source, type, point = { x: source.x + 440, y: source.y }) {
   const ref = binding(source);
   const n = createNode(type, point, {
     refs: [ref],
@@ -1125,20 +1401,25 @@ async function poll() {
             const url =
               t.kind === "image" ? t.local_image_url : t.local_video_url;
             if (!url) continue;
+            const submitted = n.runs?.find(
+              (run) => run.taskId === t.id,
+            )?.snapshot;
             const v = {
               id: t.id,
               taskId: t.id,
               kind: t.kind,
               url,
               createdAt: t.finished_at * 1000,
-              snapshot: {
-                prompt: t.prompt,
-                profile: t.profile,
-                ratio: t.ratio,
-                resolution: t.resolution,
-                duration: t.duration,
-                refs: clone(t.reference_bindings || []),
-              },
+              snapshot: submitted
+                ? clone(submitted)
+                : {
+                    prompt: t.prompt,
+                    profile: t.profile,
+                    ratio: t.ratio,
+                    resolution: t.resolution,
+                    duration: t.duration,
+                    refs: clone(t.reference_bindings || []),
+                  },
             };
             n.versions ??= [];
             n.versions.push(v);
@@ -1168,43 +1449,92 @@ async function poll() {
       selected = chosen;
       drawEdges();
       renderShots();
+      if (mutated && selected.size === 1)
+        ensureNodeVisible(node([...selected][0]));
+      if ($("#library-dialog").open && mutated) renderAssets();
     }
   } catch (e) {
     $("#task-count").title = e.message;
   }
 }
 function renderTaskList() {
-  $("#task-list").replaceChildren(
+  const list = $("#task-list");
+  list.replaceChildren(
     ...tasks
-      .filter((t) => t.board_id === boardId)
+      .slice()
       .sort((a, b) => b.created_at - a.created_at)
       .slice(0, 100)
       .map((t) => {
-        const row = make("div", "task-row");
-        const info = make("div");
-        info.append(
+        const row = make("div", "task-row"),
+          info = make("div", "task-info"),
+          heading = make("div", "task-heading");
+        let owner, origin, source;
+        for (const p of doc.projects) {
+          const b = p.boards.find((b) => b.id === t.board_id);
+          if (b) {
+            owner = p;
+            origin = b;
+            source = b.nodes.find((n) => n.id === t.node_id);
+            break;
+          }
+        }
+        heading.append(
+          icon(t.kind),
           make(
-            "p",
+            "strong",
             "",
-            `${statusName(t.status)} · ${node(t.node_id)?.name || "已移除节点"}`,
+            source?.name || (t.kind === "video" ? "视频任务" : "图片任务"),
           ),
-          make("small", "", t.prompt),
-          make("small", "", t.error || "收费 / 退款状态请以供应商消费记录为准"),
+          make("span", "task-status " + t.status, statusName(t.status)),
         );
-        row.append(
-          info,
-          button("定位", () => {
-            if (node(t.node_id)) {
-              focusNodes([node(t.node_id)]);
+        info.append(
+          heading,
+          make("p", "task-prompt", t.prompt),
+          make(
+            "small",
+            "task-meta",
+            [
+              MODELS[t.profile]?.name || "",
+              origin ? owner.name + " / " + origin.name : "生成控制台",
+              new Date(t.created_at * 1000).toLocaleString("zh-CN", {
+                month: "numeric",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              }),
+            ]
+              .filter(Boolean)
+              .join(" · "),
+          ),
+        );
+        if (t.error) info.append(make("p", "task-error", t.error));
+        const actions = make("div", "task-actions");
+        if (source)
+          actions.append(
+            button("定位节点", () => {
+              projectId = owner.id;
+              if (boardId !== origin.id) setBoard(origin.id);
+              setWorkspaceView(false);
+              selected = new Set([source.id]);
+              render();
+              focusNodes([source]);
               $("#task-dialog").close();
-            } else toast("源节点已移除，结果仍保留在旧版控制台历史中");
-          }),
-        );
+            }),
+          );
         if (t.status === "paused")
-          row.append(button("继续查询", () => resumeTask(t)));
+          actions.append(button("继续查询", () => resumeTask(t)));
+        row.append(info, actions);
         return row;
       }),
   );
+  if (!tasks.length)
+    list.append(
+      make(
+        "p",
+        "task-empty",
+        "还没有生成任务。创建一个节点，从第一个画面开始。",
+      ),
+    );
 }
 async function uploadFiles(files, point = centerPoint()) {
   for (const [i, file] of [...files].entries()) {
@@ -1241,16 +1571,43 @@ function assetNode(asset, point = centerPoint()) {
 async function openLibrary() {
   const data = await api("/api/library");
   assets = data.assets;
-  $("#library-dialog").showModal();
+  if (!$("#library-dialog").open) $("#library-dialog").show();
   renderAssets();
 }
+let assetScope = "board",
+  assetObserver;
 function renderAssets() {
+  assetObserver?.disconnect();
+  assetObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (entry.isIntersecting) {
+          entry.target.preload = "metadata";
+          assetObserver.unobserve(entry.target);
+        }
+      });
+    },
+    { root: $("#asset-list"), rootMargin: "100px" },
+  );
   const q = $("#asset-search").value.toLowerCase(),
     kind = $("#asset-kind").value;
-  const filtered = assets.filter(
+  const onBoard = assetScope === "board";
+  const entries = onBoard
+    ? board()
+        .nodes.filter((n) => n.type !== "group")
+        .map((n) => ({
+          id: n.id,
+          name: n.name,
+          kind: n.type,
+          url: mediaURL(version(n)),
+          prompt: n.prompt,
+          node: n,
+        }))
+    : assets;
+  const filtered = entries.filter(
     (a) =>
       (!kind || a.kind === kind) &&
-      [a.name, tasks.find((t) => t.id === a.task_id)?.prompt]
+      [a.name, a.prompt, tasks.find((t) => t.id === a.task_id)?.prompt]
         .join(" ")
         .toLowerCase()
         .includes(q),
@@ -1258,23 +1615,57 @@ function renderAssets() {
   $("#asset-list").replaceChildren(
     ...filtered.slice(0, 100).map((a) => {
       const b = button("", () => {
-        assetNode(a);
-        $("#library-dialog").close();
+        if (onBoard) {
+          selected = new Set([a.id]);
+          render();
+          focusNodes([a.node]);
+        } else {
+          const created = assetNode(a);
+          focusNodes([created]);
+          toast("已加入画板");
+        }
       });
       b.className = "asset-item";
-      const media = make(a.kind === "image" ? "img" : "video");
-      media.src = a.kind === "image" ? a.url + "?thumbnail=1" : a.url;
-      media.loading = "lazy";
-      if (a.kind === "video") {
-        media.preload = "none";
-        media.muted = true;
-      }
-      b.append(media, make("span", "", a.name));
+      b.title = onBoard ? "定位到 " + a.name : "添加 " + a.name;
+      const preview = make("div", "asset-preview");
+      if (a.url) {
+        const media = make(a.kind === "video" ? "video" : "img");
+        media.src = a.kind === "image" ? thumb(a) : a.url;
+        if (a.kind === "video") {
+          media.preload = "none";
+          assetObserver.observe(media);
+          media.muted = true;
+        } else {
+          media.loading = "lazy";
+          media.alt = a.name;
+        }
+        preview.append(media);
+      } else preview.append(icon(a.kind));
+      preview.append(
+        make(
+          "span",
+          "asset-type",
+          { image: "图片", video: "视频", text: "文本" }[a.kind] || "素材",
+        ),
+      );
+      b.append(preview, make("span", "asset-name", a.name));
       return b;
     }),
   );
+  if (!filtered.length)
+    $("#asset-list").append(
+      make(
+        "p",
+        "asset-empty",
+        q
+          ? "没有找到匹配的素材"
+          : onBoard
+            ? "上传素材或创建节点，\n它们会出现在这里。"
+            : "素材库还是空的，\n先上传一张参考图吧。",
+      ),
+    );
   $("#library-note").textContent =
-    `共 ${filtered.length} 个素材${filtered.length > 100 ? "，显示前 100 个，可搜索筛选" : ""}。点击加入画板，素材文件不会重复上传。`;
+    `${filtered.length} 个${onBoard ? "节点 · 点击定位" : "素材 · 点击添加到画板"}${filtered.length > 100 ? " · 显示前100个" : ""}`;
 }
 async function extractFrame(n, mode, current = 0, continueVideo = false) {
   const source = clone(version(n));
@@ -1340,7 +1731,7 @@ async function extractFrame(n, mode, current = 0, continueVideo = false) {
     body: form,
   });
   assets.push(result.asset);
-  const created = assetNode(result.asset, { x: n.x + 390, y: n.y });
+  const created = assetNode(result.asset, { x: n.x + 440, y: n.y });
   version(created).sourceFrame = {
     nodeId: n.id,
     name: n.name,
@@ -1350,7 +1741,7 @@ async function extractFrame(n, mode, current = 0, continueVideo = false) {
   };
   touch();
   if (continueVideo) {
-    const next = derive(created, "video", { x: n.x + 780, y: n.y });
+    const next = derive(created, "video", { x: n.x + 880, y: n.y });
     next.prompt = "";
     next.previousPrompt = source.snapshot?.prompt || n.prompt;
     touch();
@@ -1376,24 +1767,68 @@ function previewVersions(versions) {
   $("#preview-dialog").showModal();
 }
 function versionDetails(v) {
-  const snapshot = v.snapshot;
-  editDialog(
-    "版本参数 · 只读查看",
-    [
-      [
-        "detail",
-        "生成快照",
-        "textarea",
-        JSON.stringify(
-          snapshot || v.sourceFrame || { source: "导入素材" },
-          null,
-          2,
-        ),
-      ],
-    ],
-    () => {},
+  const body = $("#version-content"),
+    snapshot = v.snapshot;
+  body.replaceChildren();
+  const fields = snapshot
+    ? [
+        ["模型", MODELS[snapshot.profile]?.name || snapshot.profile || "—"],
+        [
+          "画幅 / 画质",
+          [snapshot.ratio, snapshot.resolution].filter(Boolean).join(" · ") ||
+            "模型默认",
+        ],
+        ...(v.kind === "video"
+          ? [["时长", (snapshot.duration || "—") + " 秒"]]
+          : []),
+        [
+          "生成时间",
+          new Date(v.createdAt || Date.now()).toLocaleString("zh-CN"),
+        ],
+      ]
+    : [["来源", v.sourceFrame ? "视频截帧" : "导入素材"]];
+  const meta = make("dl", "version-meta");
+  fields.forEach(([label, value]) =>
+    meta.append(make("dt", "", label), make("dd", "", value)),
   );
-  $("#edit-fields textarea").readOnly = true;
+  body.append(meta);
+  if (snapshot) {
+    body.append(
+      make("h3", "", "当次提示词"),
+      make("p", "version-prompt", snapshot.prompt || "未填写"),
+    );
+    if (snapshot.refs?.length) {
+      body.append(make("h3", "", "当次参考素材"));
+      const list = make("div", "version-references");
+      snapshot.refs.forEach((ref) => {
+        const item = make("div");
+        if (ref.kind === "image") {
+          const img = make("img");
+          img.src = thumb(ref);
+          img.alt = ref.name;
+          item.append(img);
+        } else item.append(icon(ref.kind));
+        item.append(
+          make("span", "", ref.name),
+          make("small", "", ref.role || "参考素材"),
+        );
+        list.append(item);
+      });
+      body.append(list);
+    }
+  }
+  if (v.sourceFrame) {
+    body.append(
+      make("h3", "", "截帧来源"),
+      make(
+        "p",
+        "version-prompt",
+        `${v.sourceFrame.name} · ${v.sourceFrame.time.toFixed(3)} 秒`,
+      ),
+    );
+  }
+  $("#download-version").onclick = () => downloadJSON(v, "生成记录.json");
+  $("#version-dialog").showModal();
 }
 function download(url, name) {
   const a = make("a");
@@ -1413,10 +1848,21 @@ function downloadJSON(value, name) {
 function editDialog(title, fields, submit) {
   $("#edit-title").textContent = title;
   $("#edit-fields").replaceChildren(
-    ...fields.flatMap(([key, label, type, value]) => {
+    ...fields.flatMap(([key, label, type, value, options]) => {
       const l = make("label", "", label);
       l.htmlFor = "edit-" + key;
-      const e = make(type === "textarea" ? "textarea" : "input");
+      const e =
+        type === "select"
+          ? selector(options || [], value, () => {})
+          : make(type === "textarea" ? "textarea" : "input");
+      if (e.tagName === "INPUT") {
+        e.type = type;
+        if (type === "number") {
+          e.min = "1";
+          e.max = "3600";
+          e.step = "1";
+        }
+      }
       e.id = "edit-" + key;
       e.name = key;
       e.value = value ?? "";
@@ -1436,17 +1882,14 @@ function editNode(n) {
     "节点设置",
     [
       ["name", "名称（用于 @ 搜索）", "text", n.name],
-      [
-        "previous",
-        "上一段提示词（仅上下文，不会自动提交）",
-        "textarea",
-        n.previousPrompt || "",
-      ],
+      ...(n.previousPrompt
+        ? [["previous", "上一段上下文", "textarea", n.previousPrompt]]
+        : []),
     ],
     (v) => {
       checkpoint();
       n.name = v.name.trim() || n.name;
-      n.previousPrompt = v.previous;
+      if ("previous" in v) n.previousPrompt = v.previous;
       touch();
       render();
     },
@@ -1466,7 +1909,8 @@ function adopt(n, v) {
   render();
   toast("已设为镜头采用版本；下游已有引用保持原版本");
 }
-function renderShots() {
+function renderShots(force = false) {
+  if (!$("#story-panel").hidden) renderStoryGrid(force);
   $("#shots").replaceChildren(
     ...board().shots.map((s, i) => {
       const card = make(
@@ -1519,7 +1963,7 @@ function moveShot(i, offset) {
   touch();
   renderShots();
 }
-function editShot(s) {
+function editShot(s, isNew = false) {
   editDialog(
     "镜头信息",
     [
@@ -1527,11 +1971,15 @@ function editShot(s) {
       ["scene", "场景", "text", s.scene],
       ["description", "画面 / 动作 / 景别 / 运镜", "textarea", s.description],
       ["dialogue", "对白", "textarea", s.dialogue],
-      ["duration", "目标时长（秒）", "text", s.duration],
+      ["duration", "目标时长（秒）", "number", s.duration],
     ],
     (v) => {
       checkpoint();
-      Object.assign(s, v);
+      Object.assign(s, v, { duration: Number(v.duration) });
+      if (isNew) {
+        board().shots.push(s);
+        activeShot = s.id;
+      }
       touch();
       render();
     },
@@ -1577,7 +2025,7 @@ function groupSelected() {
     {
       name: "场景分组",
       members: ns.map((n) => n.id),
-      width: Math.max(...ns.map((n) => n.x + 320)) - x + 25,
+      width: Math.max(...ns.map((n) => n.x + NODE_WIDTH)) - x + 25,
       height:
         Math.max(
           ...ns.map(
@@ -1604,6 +2052,7 @@ function duplicate() {
     y: n.y + 50,
     runs: [],
     lastSubmission: "",
+    pendingSubmission: undefined,
     members: n.members?.map((id) => mapping[id] || id),
     refs: (n.refs || []).map((r) => ({
       ...r,
@@ -1619,7 +2068,7 @@ function duplicate() {
 $("#viewport").addEventListener(
   "wheel",
   (e) => {
-    if (e.target.closest("textarea,select")) return;
+    if (e.target.closest("textarea,select,.dropdown,.floating-menu")) return;
     e.preventDefault();
     if (e.ctrlKey || e.metaKey)
       zoom(Math.exp(-e.deltaY * 0.006), e.clientX, e.clientY);
@@ -1635,7 +2084,7 @@ $("#viewport").addEventListener(
 $("#viewport").addEventListener("pointerdown", (e) => {
   if (
     e.target.closest(
-      ".node,.canvas-top,.navigation,#minimap,#empty,#reference-mode",
+      ".node,.canvas-top,.navigation,.creation-dock,#minimap,#empty,#reference-mode",
     )
   )
     return;
@@ -1670,17 +2119,13 @@ $("#viewport").addEventListener("pointerdown", (e) => {
         .nodes.filter(
           (n) =>
             !hiddenNode(n) &&
-            n.x + 320 >= Math.min(a.x, b.x) &&
+            n.x + NODE_WIDTH >= Math.min(a.x, b.x) &&
             n.x <= Math.max(a.x, b.x) &&
             n.y + 200 >= Math.min(a.y, b.y) &&
             n.y <= Math.max(a.y, b.y),
         )
         .forEach((n) => selected.add(n.id));
-      document
-        .querySelectorAll(".node")
-        .forEach((n) =>
-          n.classList.toggle("selected", selected.has(n.dataset.id)),
-        );
+      syncSelection();
       drawEdges();
     }
   };
@@ -1707,7 +2152,22 @@ $("#viewport").addEventListener("drop", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.target.closest("input,textarea,select,dialog")) return;
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    history(
+      e.shiftKey ? redoStack : undoStack,
+      e.shiftKey ? undoStack : redoStack,
+    );
+    return;
+  }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    save();
+    return;
+  }
+  if (!$("#story-panel").hidden) return;
   if (e.code === "Space") {
+    if (e.target.closest("button,summary")) return;
     e.preventDefault();
     space = true;
     document.body.classList.add("panning");
@@ -1720,15 +2180,6 @@ document.addEventListener("keydown", (e) => {
         .map((n) => n.id),
     );
     render();
-  } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
-    e.preventDefault();
-    save();
-  } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
-    e.preventDefault();
-    history(
-      e.shiftKey ? redoStack : undoStack,
-      e.shiftKey ? undoStack : redoStack,
-    );
   } else if ((e.metaKey || e.ctrlKey) && e.key === "c") {
     copyBuffer = [...selected].map(node).filter(Boolean).map(clone);
     toast("节点已复制");
@@ -1790,7 +2241,20 @@ $("#upload").onchange = (e) => {
   uploadFiles(e.target.files).catch(report);
   e.target.value = "";
 };
-$("#library-button").onclick = () => openLibrary().catch(report);
+$("#library-button").onclick = () => {
+  if ($("#library-dialog").open) $("#library-dialog").close();
+  else openLibrary().catch(report);
+};
+document.querySelectorAll("[data-asset-scope]").forEach(
+  (b) =>
+    (b.onclick = () => {
+      assetScope = b.dataset.assetScope;
+      document
+        .querySelectorAll("[data-asset-scope]")
+        .forEach((t) => t.setAttribute("aria-selected", String(t === b)));
+      renderAssets();
+    }),
+);
 $("#asset-search").oninput = renderAssets;
 $("#asset-kind").onchange = renderAssets;
 $("#group-button").onclick = () => {
@@ -1816,7 +2280,7 @@ $("#arrange-button").onclick = () => {
       ),
     );
     row.forEach((n, j) => {
-      n.x = p.x + j * 390;
+      n.x = p.x + j * 440;
       n.y = y;
     });
     y += height + 70;
@@ -1886,7 +2350,18 @@ $("#project-menu").onclick = () =>
     [
       ["name", "项目名称", "text", project().name],
       ["style", "统一视觉风格（备注）", "textarea", project().style],
-      ["action", "操作：留空 / 复制 / 归档 / 恢复归档", "text", ""],
+      [
+        "action",
+        "项目操作",
+        "select",
+        "",
+        [
+          ["", "保存当前项目"],
+          ["复制", "复制为新项目"],
+          ["归档", "归档当前项目"],
+          ["恢复归档", "恢复已归档项目"],
+        ],
+      ],
     ],
     (v) => {
       const p = project();
@@ -1937,22 +2412,43 @@ $("#rename-board").onclick = () =>
     render();
   });
 $("#new-shot").onclick = () => {
-  checkpoint();
   const s = {
     id: uid(),
     name: "镜头 " + (board().shots.length + 1),
     scene: "",
     duration: 5,
   };
-  board().shots.push(s);
-  activeShot = s.id;
-  touch();
-  renderShots();
-  editShot(s);
+  editShot(s, true);
 };
 $("#task-toggle").onclick = () => {
   $("#task-dialog").showModal();
   renderTaskList();
+};
+$("#save-draft").onclick = () =>
+  downloadJSON(doc, project().name + "-未保存草稿.json");
+$("#reload-board").onclick = async () => {
+  try {
+    const latest = await api("/api/boards");
+    downloadJSON(doc, project().name + "-未保存草稿.json");
+    const previousBoard = boardId;
+    doc = latest;
+    projectId =
+      doc.projects.find((p) => p.id === projectId && !p.archived)?.id ||
+      doc.projects.find((p) => !p.archived)?.id;
+    if (!projectId) throw new Error("没有可用项目，请导入备份恢复");
+    dirty = false;
+    loadFailed = false;
+    localStorage.removeItem("studio-board-draft");
+    setBoard(
+      project().boards.find((b) => b.id === previousBoard)?.id ||
+        project().boards[0].id,
+    );
+    $("#save-state").textContent = "已保存";
+    $("#save-notice").hidden = true;
+    toast("已下载原草稿并载入最新画板，可导入草稿恢复修改。");
+  } catch (e) {
+    report(e);
+  }
 };
 $("#export-board").onclick = () =>
   downloadJSON(doc, project().name + "-画板备份.json");
@@ -2009,17 +2505,12 @@ async function boot() {
       project().boards.find((b) => b.id === last)?.id || project().boards[0].id;
     render();
     if (dirty) touch();
-    else $("#save-state").textContent = "✓ 已保存到本机";
-    const [library, health, price] = await Promise.allSettled([
+    else $("#save-state").textContent = "已保存";
+    const [library, price] = await Promise.allSettled([
       api("/api/library"),
-      api("/api/health"),
       api("/api/provider-pricing"),
     ]);
     if (library.status === "fulfilled") assets = library.value.assets;
-    if (health.status === "fulfilled")
-      $("#provider-state").textContent = health.value.lingganya_ready
-        ? "● 灵感鸭密钥已配置"
-        : "○ 灵感鸭密钥未配置";
     if (price.status === "fulfilled") pricing = price.value;
     await poll();
     setInterval(poll, 5000);
@@ -2029,4 +2520,168 @@ async function boot() {
     report(e);
   }
 }
+function setWorkspaceView(story) {
+  $("#library-dialog").close();
+  $("#viewport").hidden = story;
+  $("#story-panel").hidden = !story;
+  $("#canvas-view").setAttribute("aria-selected", String(!story));
+  $("#story-view").setAttribute("aria-selected", String(story));
+  if (story) {
+    $(".shot-strip").hidden = true;
+    renderStoryGrid(true);
+  }
+}
+function renderStoryGrid(force = false) {
+  if (!board()) return;
+  const signature = JSON.stringify([boardId, board().shots]);
+  if (!force && $("#story-grid").dataset.signature === signature) return;
+  $("#story-grid").dataset.signature = signature;
+  $("#story-grid").replaceChildren(
+    ...board().shots.map((shot, index) => {
+      const card = make("article", "story-tile"),
+        frame = make("div", "story-media"),
+        chosen = shot.video || shot.image;
+      if (chosen) {
+        const media = make(chosen.kind === "video" ? "video" : "img");
+        media.src =
+          chosen.kind === "video"
+            ? mediaURL(chosen)
+            : thumb({ ...chosen, url: mediaURL(chosen) });
+        if (chosen.kind === "video") {
+          media.controls = true;
+          media.preload = "metadata";
+          media.muted = true;
+        } else {
+          media.alt = shot.name;
+          media.loading = "lazy";
+          media.addEventListener("click", () => previewVersions([chosen]));
+        }
+        frame.append(media);
+      } else frame.append(icon("image"));
+      frame.append(
+        make("span", "story-number", String(index + 1).padStart(2, "0")),
+      );
+      const copy = make("div", "story-copy");
+      copy.append(
+        make("h3", "", shot.name),
+        make(
+          "p",
+          "",
+          shot.description ||
+            shot.dialogue ||
+            "还没有镜头描述，添加画面、动作或对白。",
+        ),
+      );
+      const meta = make("div", "story-meta");
+      meta.append(
+        make(
+          "span",
+          "",
+          shot.video ? "已选片" : shot.image ? "待生视频" : "待生图",
+        ),
+        make(
+          "span",
+          "",
+          `· ${shot.duration || 5} 秒${shot.scene ? " · " + shot.scene : ""}`,
+        ),
+      );
+      copy.append(meta);
+      const actions = make("div", "story-controls");
+      actions.append(
+        button("打开镜头", () => {
+          activeShot = shot.id;
+          setWorkspaceView(false);
+          const related = board().nodes.filter((n) => n.shotId === shot.id);
+          selected = new Set(related.map((n) => n.id));
+          render();
+          if (related.length) focusNodes(related);
+          else {
+            createNode("image", centerPoint(), {
+              name: shot.name,
+              shotId: shot.id,
+              prompt: shot.description || "",
+            });
+          }
+        }),
+        button("编辑", () => editShot(shot)),
+        button("←", () => moveShot(index, -1)),
+        button("→", () => moveShot(index, 1)),
+        actionMenu(
+          "镜头操作",
+          [
+            [
+              "移除镜头",
+              () => {
+                checkpoint();
+                board().shots = board().shots.filter((s) => s.id !== shot.id);
+                board().nodes.forEach((n) => {
+                  if (n.shotId === shot.id) n.shotId = "";
+                });
+                if (activeShot === shot.id) activeShot = "";
+                touch();
+                render();
+                toast("镜头已移除，画板素材保留；可撤销。");
+              },
+            ],
+          ],
+          "more-actions",
+        ),
+      );
+      copy.append(actions);
+      card.append(frame, copy);
+      return card;
+    }),
+  );
+  if (!board().shots.length) {
+    const empty = make("div", "story-empty");
+    empty.append(
+      icon("frame"),
+      make(
+        "p",
+        "",
+        "这里还没有镜头。\n新建一个镜头，或在画板中将结果设为“采用”。",
+      ),
+    );
+    $("#story-grid").append(empty);
+  }
+}
+function applyTheme(light) {
+  document.body.classList.toggle("light", light);
+  localStorage.setItem("studio-theme", light ? "light" : "dark");
+  $("#theme-toggle").textContent = light ? "切换深色外观" : "切换浅色外观";
+}
+document
+  .querySelectorAll("[data-icon]")
+  .forEach((el) => el.append(icon(el.dataset.icon)));
+applyTheme(localStorage.getItem("studio-theme") === "light");
+$("#canvas-view").onclick = () => setWorkspaceView(false);
+$("#story-view").onclick = () => setWorkspaceView(true);
+$("#story-new-shot").onclick = () => $("#new-shot").onclick();
+$("#theme-toggle").onclick = () =>
+  applyTheme(!document.body.classList.contains("light"));
+$("#help-toggle").onclick = () => $("#help-dialog").showModal();
+$("#toggle-map").onclick = () => {
+  $("#minimap").hidden = !$("#minimap").hidden;
+  $("#toggle-map").setAttribute("aria-pressed", String(!$("#minimap").hidden));
+};
+$("#toggle-edges").onclick = () => {
+  const hidden = document.body.classList.toggle("edges-hidden");
+  $("#toggle-edges").setAttribute("aria-pressed", String(!hidden));
+};
+$("#toggle-shots").onclick = () => {
+  $(".shot-strip").hidden = !$(".shot-strip").hidden;
+};
+$("#close-shots").onclick = () => ($(".shot-strip").hidden = true);
+$("#zoom-label").onclick = () => zoom(1 / board().view.z);
+document.addEventListener("click", (e) => {
+  document.querySelectorAll("details[open]").forEach((d) => {
+    if (!d.contains(e.target) || e.target.closest(".menu-item,.board-row"))
+      d.open = false;
+  });
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape")
+    document.querySelectorAll("details[open]").forEach((d) => (d.open = false));
+});
+
 boot();
