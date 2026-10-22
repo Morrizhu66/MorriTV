@@ -660,3 +660,10 @@ body.light .recycle-dialog{background:var(--panel);color:var(--ink);border-color
 .script-orb-button[aria-expanded=true]{box-shadow:0 0 20px #8dc64030;}
 .node .editor-heading .expand-editor{margin-left:auto;}
 @media(prefers-reduced-motion:reduce){.orb-label{transition:none;}}
+.project-pill .brand{font-size:18px;letter-spacing:-.7px;line-height:1;font-weight:650;white-space:nowrap;}
+.project-pill .brand span{font-size:inherit;vertical-align:baseline;margin-left:1px;}
+.rich-prompt{cursor:text;user-select:text;-webkit-user-select:text;}
+
+/* Generated MorriTV identity: compact, consistent in both themes. */
+.project-pill .brand{display:flex;align-items:center;padding:0;flex:none;overflow:hidden;border-radius:7px;background:#000;}
+.project-pill .brand img{display:block;width:112px;height:46px;object-fit:contain;}

@@ -834,6 +834,7 @@ function renderNode(n) {
   el.append(header);
   header.addEventListener("pointerdown", (e) => startMove(e, n));
   el.addEventListener("pointerdown", (e) => {
+    if (CanvasUI.isEditing(e.target)) { e.stopPropagation(); return; }
     if (pickTarget && n.id !== pickTarget) {
       e.preventDefault();
       e.stopPropagation();
@@ -854,6 +855,7 @@ function renderNode(n) {
       startMove(e, n);
   });
   el.addEventListener("dblclick", (e) => {
+    if (CanvasUI.isEditing(e.target)) { e.stopPropagation(); return; }
     if (!e.target.closest("button,input,textarea,select,video,a,summary,img"))
       focusNodes([n]);
   });
@@ -1422,6 +1424,7 @@ function zoom(factor, x, y) {
 }
 function startMove(e, n) {
   if (
+    CanvasUI.isEditing(e.target) ||
     e.button !== 0 ||
     e.target.closest("button,summary,details") ||
     space ||
@@ -2404,7 +2407,7 @@ async function extractFrame(n, mode, current = 0, continueVideo = false) {
     next.previousPrompt = source.snapshot?.prompt || n.prompt;
     touch();
     render();
-    toast("尾帧已作为图片参考，请填写下一段动作；尚未提交生成。");
+    toast(`${mode === "last" ? "尾帧" : "当前帧"}已作为图片参考，请填写下一段动作；尚未提交生成。`);
   } else {
     render();
     toast(`已提取 ${time.toFixed(3)} 秒处画面，源视频保留。`);

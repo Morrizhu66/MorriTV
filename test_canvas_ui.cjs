@@ -166,3 +166,15 @@ test('inspiration search matches title and prompts with combined case-insensitiv
  const i={name:'Studio portrait',root:'a',nodes:[{id:'a',prompt:'柔和光线 人物',versions:[{snapshot:{prompt:'old prompt'}}]}]};
  assert.equal(c.inspirationMatches(i,'studio 人物'),true);assert.equal(c.inspirationMatches(i,'old'),true);assert.equal(c.inspirationMatches(i,'landscape'),false);assert.equal(c.inspirationMatches(i,' '),true);
 });
+
+test('editing text never starts a node move or modifies selection', () => {
+  for (const kind of ['textarea','contenteditable','mention-child']) {
+    const target={kind,closest:()=>null};
+    let editingCalls=0;
+    const c=vm.createContext({CanvasUI:{isEditing(t){editingCalls++;return t===target;}}});
+    vm.runInContext(section('function startMove(', 'function connectionPath('),c);
+    // Any drag/selection access would throw: editable content must return first.
+    c.startMove({button:0,target,stopPropagation(){throw Error('drag started');}},{id:'node'});
+    assert.equal(editingCalls,1);
+  }
+});
