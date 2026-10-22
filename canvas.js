@@ -627,6 +627,13 @@ function buildGenerationEditor(n, expanded = false) {
     heading.lastChild.replaceChildren(icon("fit"));
 
     const prompt = make("textarea");
+    if(n.type !== 'text') {
+      const choices = imageMentionCandidates(n);
+      for(const ref of n.refs || []) {
+        const choice=choices.find(c=>c.id===ref.nodeId);
+        if(choice && ref.name!==choice.name){n.prompt=n.prompt.split('@'+ref.name).join('@'+choice.name);ref.name=choice.name;}
+      }
+    }
     prompt.value = n.prompt;
     prompt.placeholder =
       n.type === "text"
@@ -651,7 +658,22 @@ function buildGenerationEditor(n, expanded = false) {
     }
     editor.append(prompt);
     if(n.type!=="text"){
-      const rich=RichPrompt.mount(prompt,{candidates:()=>board().nodes.filter(x=>x.id!==n.id&&version(x)?.kind==="image").map(x=>({id:x.id,name:x.name,url:thumb(version(x))})),onPick:c=>{if(!n.refs.some(r=>r.nodeId===c.id))n.refs.push(binding(node(c.id)));requestAnimationFrame(()=>{render();});},onRemove:c=>{n.refs=n.refs.filter(r=>r.nodeId!==c.id);requestAnimationFrame(()=>render());}});
+      const refreshReferences = () => requestAnimationFrame(() => {
+        const offset = prompt._rich?.caret() ?? n.prompt.length;
+        const focused = document.activeElement === prompt._rich?.editor;
+        if(expandedEditor?.id===n.id){expandedEditor.signature=null;prompt._rich?.editor.blur();}
+        render();
+        if (focused) {
+          const scope = expandedEditor?.id===n.id ? expandedEditor.host : document;
+          const next = [...scope.querySelectorAll('textarea')].find(t => t.getAttribute('aria-label') === n.name + ' 提示词' && t._rich);
+          next?._rich.restore(offset);
+        }
+      });
+      const rich=RichPrompt.mount(prompt,{
+        candidates:()=>imageMentionCandidates(n),
+        onPick:c=>{if(!n.refs.some(r=>r.nodeId===c.id))n.refs.push({...binding(node(c.id)),name:c.name});refreshReferences();},
+        onRemove:c=>{n.refs=n.refs.filter(r=>r.nodeId!==c.id);refreshReferences();}
+      });
       prompt._rich=rich;prompt.focus=()=>rich.editor.focus();
     }
     if (n.type !== "text") {
@@ -700,7 +722,7 @@ function buildGenerationEditor(n, expanded = false) {
         const remove = button("×", () => {
           checkpoint();
           n.refs = n.refs.filter((r) => r !== ref);
-          n.prompt = n.prompt.split("@" + ref.name).join("");
+          n.prompt = removeImageMention(n.prompt, ref.name);
           touch();
           render();
         });
@@ -1292,12 +1314,22 @@ function disconnectEdge(n, ref) {
   if (ref.extracted) { const v = version(n); if (v) delete v.sourceFrame; }
   else {
     n.refs = n.refs.filter(r => r !== ref);
-    if (!n.refs.some(r => r.name === ref.name)) n.prompt = (n.prompt || '').split('@' + ref.name).join('');
+    if (!n.refs.some(r => r.name === ref.name)) n.prompt = removeImageMention(n.prompt || '', ref.name);
   }
   selectedEdge = null;
   touch(); render();
 }
 
+function removeImageMention(text, name) {
+  return text.replace(new RegExp('@' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + (/^图片\d+$/.test(name) ? '(?!\\d)' : ''), 'g'), '');
+}
+function imageMentionCandidates(target) {
+  const images = board().nodes.filter(x => version(x)?.kind === 'image');
+  let serial = Math.max(0, ...board().nodes.map(x => Number((x.referenceName || '').match(/^图片(\d+)$/)?.[1] || 0)), board().imageReferenceSerial || 0);
+  for (const x of images) if (!x.referenceName) x.referenceName = '图片' + (++serial);
+  board().imageReferenceSerial = serial;
+  return images.filter(x => x.id !== target.id).map(x => ({id:x.id,name:x.referenceName,url:thumb(version(x))}));
+}
 function drawEdges() {
   if (edgeFrame) return;
   edgeFrame = requestAnimationFrame(() => { edgeFrame = 0; paintEdges(); });

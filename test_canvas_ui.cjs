@@ -187,3 +187,13 @@ test('disconnecting a reference preserves source and other references',()=>{
  const extracted={versions:[{sourceFrame:{nodeId:'video'},url:'still.png'}]};
  c.disconnectEdge(extracted,{extracted:true});assert.equal(extracted.versions[0].sourceFrame,undefined);assert.equal(extracted.versions[0].url,'still.png');
 });
+test('image variables distinguish duplicate files and retain numbers after deletion',()=>{
+ const b={nodes:[{id:'a',name:'image.png',kind:'image'},{id:'b',name:'image.png',kind:'image'}]};
+ const c=vm.createContext({board:()=>b,version:x=>x,thumb:x=>x.id});
+ vm.runInContext(section('function removeImageMention(', 'function drawEdges('),c);
+ assert.equal(c.imageMentionCandidates({id:'target'})[1].name,'图片2');
+ b.nodes.shift();b.nodes.push({id:'c',name:'new.png',kind:'image'});
+ assert.equal(c.imageMentionCandidates({id:'target'})[0].name,'图片2');
+ assert.equal(c.imageMentionCandidates({id:'target'})[1].name,'图片3');
+ assert.equal(c.removeImageMention('@图片1 和 @图片10','图片1'),' 和 @图片10');
+});
