@@ -43,7 +43,7 @@ BeUI 原版 StreamingResponse 渲染 Markdown 正文；AgentActivity 呈现返�
 
 PromptInput 的附件入口支持每轮最多 6 个文件、每个 20 MB。文本、Markdown、Word、PDF、PPTX、XLSX、ODT 和 ZIP 中可读取的文本提取为本轮上下文；PNG/JPEG/WebP/GIF 使用 DeepSeek Flash 原生图片输入。单轮提取文本最多 15 万字符。扫描 PDF 尚无 OCR，不支持解析的二进制格式给出错误，不伪称已读取。
 
-独立 Skill 安装器支持上传文件或粘贴文本，在单独 Harness 会话发送「帮我安装这个skill」，整理为可挂载的 SKILL.md，并保存上传原件。安装会话不进入写作历史。界面进度为等待估计：30 秒至 90%，只有后端成功注册 Skill 后达到 100% 并显示完成。安装成功自动挂载。原始文件不执行，默认个人 Skill 目录、终端和文件写入工具不开放给写作模型。
+独立 Skill 安装器支持上传文件或粘贴文本，在单独 Harness 会话发送「帮我安装这个skill」，整理为可挂载的 SKILL.md，并保存上传原件。安装会话不进入写作历史。界面进度为等待估计：30 秒至 90%，只有后端成功注册 Skill 后达到 100% 并显示完成。安装成功自动挂载。采用官方标准 `sdk` profile，保留默认系统提示词、原生工具和 session-log-deepseek。安装会话由 DSH 原生工具在目标目录创建 SKILL.md 及资源，应用只检查并登记实际文件，不要求返回 JSON、不重写 Skill。安装使用 deepseek-flash（V4.1 Flash），中等思考按官方 medium → high 映射。仅 Skill 加载范围继续限定本轮挂载目录，关闭默认根目录与监听。界面历史 JSON 为展示缓存，Harness session 仍为原生续聊上下文。
 
 对话和已安装 Skills 存在 gitignored `script-data/`；重新构建不删除这些内容。
 

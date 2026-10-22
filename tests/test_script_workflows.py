@@ -11,6 +11,17 @@ class WorkflowTests(unittest.TestCase):
   self.jobs=patch.object(studio,'JOBS',{});self.jobs.start()
   self.threads=patch.object(studio.threading.Thread,'start');self.threads.start()
  def tearDown(self):self.threads.stop();self.jobs.stop();self.patch.stop();self.tmp.cleanup()
+ def test_native_install_registers_files_without_rewriting(self):
+  folder=self.path/'skills'/'skill-native';folder.mkdir(parents=True)
+  original='---\nname: native-story\ndescription: Story workflow\n---\n\n# Native skill\nKeep original resources.'
+  (folder/'SKILL.md').write_text(original)
+  (folder/'helper.txt').write_text('keep me')
+  item=studio.register_native_skill(folder)
+  self.assertEqual(item['name'],'native-story')
+  self.assertEqual((folder/'SKILL.md').read_text(),original)
+  self.assertTrue((folder/'helper.txt').exists())
+ def test_native_install_requires_real_file(self):
+  with self.assertRaises(ValueError):studio.register_native_skill(self.path/'missing')
  def key(self,_):return 'sk-test-key-not-transmitted'
  def test_first_message_uses_session_returned_by_empty_history(self):
   empty=studio.history('new-board')

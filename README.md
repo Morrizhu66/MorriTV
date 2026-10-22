@@ -76,7 +76,7 @@
 
 ![Skill 安装器](docs/images/skill-installer.png)
 
-支持文本、Markdown、Word、PDF、常见 Office 文档、图片和 ZIP 内的文本资料；无法解析的格式会明确报错。单文件上限 20 MB，单次最多 6 个附件。扫描 PDF 暂无 OCR。上传内容不会作为程序执行。
+支持文本、Markdown、Word、PDF、常见 Office 文档、图片和 ZIP 内的文本资料；无法解析的格式会明确报错。单文件上限 20 MB，单次最多 6 个附件。扫描 PDF 暂无 OCR。Skill 安装由 DSH 使用原生工具执行，完成后根据实际写入的 SKILL.md 登记；工具能力遵循官方标准 SDK 配置。
 
 ## 灵感收藏
 

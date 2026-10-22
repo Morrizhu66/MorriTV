@@ -178,6 +178,18 @@ def start_install(payload,read_env):
     threading.Thread(target=run,args=(job,{'session_id':job['session_id']},prompt,[],key,attachments),daemon=True).start()
     return dict(job)
 
+def register_native_skill(destination):
+    folder=Path(destination)
+    path=folder/'SKILL.md'
+    if not path.is_file() or path.is_symlink():raise ValueError('DSH 未写入 SKILL.md，安装未完成')
+    text=path.read_text(encoding='utf-8')
+    match=re.search(r'^name:\s*[\'"]?([^\n\'"]+)',text,re.M)
+    if not text.startswith('---') or not match:raise ValueError('DSH 写入的 SKILL.md 缺少有效的名称和 frontmatter')
+    item={'id':folder.name,'name':match.group(1).strip(),'source':'DSH 原生安装','characters':len(text),'created_at':time.time()}
+    with LOCK:
+        items=skills();items.append(item);write_json(DATA/'skills.json',items)
+    return item
+
 def finish_install(text,attachments):
     cleaned=re.sub(r'^```(?:json)?\s*|\s*```$','',text.strip())
     try:data=json.loads(cleaned)
@@ -198,6 +210,16 @@ def run(job,state,prompt,selected,key,attachments=None):
         with LOCK:
             if job['status']=='cancelled':return
         mounted=DATA/'mounts'/job['id'];mounted.mkdir(parents=True,exist_ok=True)
+        if job.get('mode')=='install':
+            destination=DATA/'skills'/('skill-'+job['id'])
+            destination.mkdir(parents=True,exist_ok=True)
+            inputs=DATA/'workspaces'/state['session_id']/'inputs';inputs.mkdir(parents=True,exist_ok=True)
+            files=[]
+            for i,attachment in enumerate(attachments):
+                target=inputs/(str(i+1)+'-'+Path(attachment['name']).name)
+                shutil.copyfile(DATA/'attachments'/attachment['id']/'original',target);files.append(str(target))
+            prompt += '\n\n请使用原生工具实际安装到此目录：'+str(destination)+'。创建完整 SKILL.md，相关资源放在该目录中。原始附件路径：'+json.dumps(files,ensure_ascii=False)
+
         for skill in selected:shutil.copytree(DATA/'skills'/skill['id'],mounted/skill['id'])
         env={k:v for k,v in os.environ.items() if not any(x in k.upper() for x in ['KEY','TOKEN','SECRET','PASSWORD'])}
         env['DEEPSEEK_API_KEY']=key
@@ -217,7 +239,7 @@ def run(job,state,prompt,selected,key,attachments=None):
         with LOCK:
             if terminal=='failed' and not job.get('error') and job['status']!='cancelled':job['error']='脚本服务启动失败或等待超时，请重试'
             if terminal=='completed' and job.get('mode')=='install' and job['status']!='cancelled':
-                job['skill']=finish_install(job['text'],attachments)
+                job['skill']=register_native_skill(destination)
                 job['text']='';job['activities']=[]
     except ValueError as exc:
         terminal='failed'
