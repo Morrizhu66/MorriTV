@@ -651,7 +651,7 @@ function buildGenerationEditor(n, expanded = false) {
     }
     editor.append(prompt);
     if(n.type!=="text"){
-      const rich=RichPrompt.mount(prompt,{candidates:()=>board().nodes.filter(x=>x.id!==n.id&&version(x)?.kind==="image").map(x=>({id:x.id,name:x.name,url:thumb(version(x))})),onPick:c=>{if(!n.refs.some(r=>r.nodeId===c.id))n.refs.push(binding(node(c.id)));}});
+      const rich=RichPrompt.mount(prompt,{candidates:()=>board().nodes.filter(x=>x.id!==n.id&&version(x)?.kind==="image").map(x=>({id:x.id,name:x.name,url:thumb(version(x))})),onPick:c=>{if(!n.refs.some(r=>r.nodeId===c.id))n.refs.push(binding(node(c.id)));requestAnimationFrame(()=>{render();});},onRemove:c=>{n.refs=n.refs.filter(r=>r.nodeId!==c.id);requestAnimationFrame(()=>render());}});
       prompt._rich=rich;prompt.focus=()=>rich.editor.focus();
     }
     if (n.type !== "text") {
@@ -700,6 +700,7 @@ function buildGenerationEditor(n, expanded = false) {
         const remove = button("×", () => {
           checkpoint();
           n.refs = n.refs.filter((r) => r !== ref);
+          n.prompt = n.prompt.split("@" + ref.name).join("");
           touch();
           render();
         });
