@@ -15,8 +15,32 @@ BASE_URL = "https://www.lingganyaapi.com"
 PROFILE = "lingganya-gpt-image-2.5-sunburst-special"
 MODEL = "gpt-image-2.5-sunburst-special"
 VIDEO_PROFILE = "lingganya-sd-2.0-mini"
-# Only the model-specific documented baseline is enabled, not another model's size table.
-SIZES = {"1:1": {"1K": "1024x1024"}}
+SUNBURST_PROFILE = "lingganya-gpt-image-2.5-sunburst"
+SPECIAL2_PROFILE = "lingganya-gpt-image-2-special"
+PX_PROFILE = "lingganya-sd-2.5-px-vip"
+IMAGE_MODELS = {PROFILE: MODEL, SUNBURST_PROFILE: "gpt-image-2.5-sunburst", SPECIAL2_PROFILE: "gpt-image-2-special"}
+VIDEO_PROFILES = {VIDEO_PROFILE, PX_PROFILE}
+PROFILES = set(IMAGE_MODELS) | VIDEO_PROFILES
+SIZES = {"1:1": {"1K": "1024x1024", "2K": "2048x2048", "4K": "4096x4096"},
+         "16:9": {"1K": "1024x576", "2K": "2048x1152", "4K": "4096x2304"},
+         "9:16": {"1K": "576x1024", "2K": "1152x2048", "4K": "2304x4096"},
+         "3:2": {"1K": "1536x1024"}, "2:3": {"1K": "1024x1536"}}
+
+def image_size(profile, ratio, resolution, references):
+    sizes = {r: v for r, v in SIZES.items() if resolution in v and (profile != SPECIAL2_PROFILE or r not in {"3:2", "2:3"})}
+    if ratio == "adaptive":
+        aspect = 1
+        first = next((r for r in references if r.get("mime", "").startswith("image/")), None)
+        if first:
+            from PIL import Image
+            with Image.open(first["path"]) as im:
+                aspect = im.width / im.height
+        import math
+        ratio = min(sizes, key=lambda r: abs(math.log(aspect / (int(r.split(":")[0]) / int(r.split(":")[1])))))
+    if ratio not in sizes:
+        raise ValueError("当前比例不支持所选清晰度")
+    return sizes[ratio][resolution]
+
 MAX_REFERENCES = 8  # Local workbench limit; not a provider capacity claim.
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
@@ -59,6 +83,15 @@ def request(path, key, body=None, content_type="application/json", timeout=600):
 
 
 def validate(profile, prompt, ratio, resolution, references):
+    if profile == PX_PROFILE:
+        if not prompt.strip() or ratio not in {"16:9", "9:16", "4:3", "3:4", "1:1", "21:9", "adaptive"} or resolution not in {"480p", "720p", "1080p"}:
+            raise ValueError("SD 2.5 PX VIP 的提示词或规格无效")
+        counts = {k: sum(r.get("mime", "").startswith(k + "/") for r in references) for k in ("image", "video", "audio")}
+        if counts["image"] > 30 or counts["video"] > 10 or counts["audio"] > 10 or sum(counts.values()) != len(references):
+            raise ValueError("参考素材超过 30 张图片、10 段视频、10 段音频的限制")
+        if counts["audio"] and not (counts["image"] or counts["video"]):
+            raise ValueError("音频须搭配图片或视频")
+        return
     if profile == VIDEO_PROFILE:
         if not prompt.strip() or ratio not in {"16:9", "9:16"} or resolution != "720p":
             raise ValueError("SD 2.0 Mini 需要提示词，支持 16:9 / 9:16，固定 720p")
@@ -68,10 +101,9 @@ def validate(profile, prompt, ratio, resolution, references):
         if (counts["video"] or counts["audio"]) and not counts["image"]:
             raise ValueError("SD 2.0 Mini 使用音视频参考时需要同时提供图片")
         return
-    if profile != PROFILE or not prompt.strip():
+    if profile not in IMAGE_MODELS or not prompt.strip():
         raise ValueError("请选择可用模型并填写提示词")
-    if ratio not in SIZES or resolution not in SIZES[ratio]:
-        raise ValueError("Sunburst Special 当前接入仅开放官方基础规格：1:1 / 1024×1024")
+    image_size(profile, ratio, resolution, references)
     if len(references) > MAX_REFERENCES:
         raise ValueError(f"本工作台每次最多提交 {MAX_REFERENCES} 张参考图；供应商可能另有限制")
     if any(ref.get("mime") not in {"image/png", "image/jpeg", "image/webp"} for ref in references):
@@ -114,19 +146,19 @@ def decode_result(payload, key):
 
 
 def generate(task, key, on_task_id=lambda value: None, sleep=time.sleep):
-    video = task["profile"] == VIDEO_PROFILE
+    video = task["profile"] in VIDEO_PROFILES
     area = "videos" if video else "images"
     upstream_id = task.get("provider_task_id")
     if upstream_id:
         payload = {"task_id": upstream_id}
     else:
         validate(task["profile"], task["prompt"], task["ratio"], task["resolution"], task["reference_files"])
-        fields = {"model": MODEL, "prompt": task["prompt"], "size": "1024x1024" if video else SIZES[task["ratio"]][task["resolution"]], "n": 1, "response_format": "b64_json"}
+        fields = {"model": IMAGE_MODELS.get(task["profile"], MODEL), "prompt": task["prompt"], "size": "1024x1024" if video else image_size(task["profile"], task["ratio"], task["resolution"], task["reference_files"]), "n": 1, "response_format": "b64_json"}
         if video:
             seconds = int(task["duration"])
-            if not 5 <= seconds <= 15:
+            if not 5 <= seconds <= (30 if task["profile"] == PX_PROFILE else 15):
                 raise ValueError("SD 2.0 Mini 时长必须为 5–15 秒")
-            fields = {"model": "sd-2.0-mini", "prompt": task["prompt"], "seconds": seconds, "size": task["ratio"], "resolution": "720p"}
+            fields = {"model": "SD-2.5-PX-VIP" if task["profile"] == PX_PROFILE else "sd-2.0-mini", "prompt": task["prompt"], "seconds": seconds, "size": task["ratio"], "resolution": task["resolution"]}
             media = {"image": [], "video": [], "audio": []}
             for ref in task["reference_files"]:
                 source = Path(ref["path"])

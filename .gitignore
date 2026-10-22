@@ -40,3 +40,12 @@ boards.tmp
 cloud-workspace.json
 cloud-workspace.tmp
 *.restore-part
+
+# Script writer private runtime and dependencies
+script-data/
+.script-venv/
+frontend/node_modules/
+integrations/deepseek-harness/
+
+# Local validation exports and private screenshots
+outputs/

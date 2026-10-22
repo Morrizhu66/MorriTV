@@ -25,6 +25,7 @@ window.CanvasUI = (() => {
     if (!active) return;
     const current = active;
     active = null;
+    current.subCleanup?.();
     current.cleanup?.();
     current.popup.remove();
     current.trigger?.setAttribute("aria-expanded", "false");
@@ -40,7 +41,7 @@ window.CanvasUI = (() => {
     popup.setAttribute("popover", "manual");
     popup.append(content);
     if (width) popup.style.width = width + "px";
-    (anchor?.closest("dialog[open]") || document.body).append(popup);
+    (anchor?.closest("dialog[open]") || document.querySelector("dialog[open]") || document.body).append(popup);
     popup.showPopover?.();
     anchor?.setAttribute("aria-expanded", "true");
     anchor?.setAttribute("aria-controls", popup.id);
@@ -56,7 +57,10 @@ window.CanvasUI = (() => {
       }).then(({ x, y }) => {
         if (active !== current) return;
         Object.assign(popup.style, { left: `${x}px`, top: `${y}px`, visibility: "visible" });
-        if (!positioned) { positioned = true; reveal(popup, 4); focus(Math.max(0, selectedIndex)); }
+        if (!positioned) { positioned = true; if (role === "listbox" && !reducedMotion.matches) {
+          const above = anchor && y < anchor.getBoundingClientRect().top;
+          popup.animate([{clipPath:above?"inset(calc(100% - 8px) 0 0 round 12px)":"inset(0 0 calc(100% - 8px) round 12px)",opacity:.4},{clipPath:"inset(0 round 12px)",opacity:1}],{duration:220,easing:"cubic-bezier(.22,1,.36,1)"});
+        } else reveal(popup,4); focus(Math.max(0, selectedIndex)); }
       });
     };
     current.cleanup = autoUpdate(reference, popup, update);
@@ -70,6 +74,7 @@ window.CanvasUI = (() => {
       option.scrollIntoView({ block: "nearest" });
     };
     focus(Math.max(0, selectedIndex));
+    popup.addEventListener("pointermove", e => { const item = e.target.closest("button,a"); if(item && options.includes(item) && document.activeElement !== item) item.focus({preventScroll:true}); });
     let typed = "", timer;
     popup.addEventListener("keydown", e => {
       e.stopPropagation();
@@ -104,6 +109,28 @@ window.CanvasUI = (() => {
       if (item.description) copy.append(create("small", "", item.description));
       b.append(check, copy);
       if (item.shortcut) b.append(create("kbd", "ui-shortcut", item.shortcut));
+      if (item.children) {
+        b.setAttribute("aria-haspopup","menu"); b.setAttribute("aria-expanded","false");
+        b.append(create("span","ui-sub-arrow","›"));
+        const expand = () => {
+          const parent = active; if (!parent || parent.subTrigger === b) return;
+          parent.subCleanup?.();
+          const sub=create("div","ui-popup ui-submenu"); sub.setAttribute("role","menu");sub.setAttribute("aria-label",item.label);sub.setAttribute("popover","manual");
+          parent.popup.append(sub);sub.showPopover();b.setAttribute("aria-expanded","true");parent.subTrigger=b;
+          for(const child of item.children){
+            const option=create("button","ui-menu-item",child.label);option.setAttribute("role","menuitem");
+            option.onclick=e=>{e.stopPropagation();close(true);Promise.resolve().then(child.action).catch(error=>document.dispatchEvent(new CustomEvent("canvas-ui-error",{detail:error})));};sub.append(option);
+          }
+          const cleanup=autoUpdate(b,sub,()=>computePosition(b,sub,{strategy:"fixed",placement:"right-start",middleware:[offset(4),flip({padding:8}),shift({padding:8})]}).then(({x,y})=>Object.assign(sub.style,{left:x+"px",top:y+"px",visibility:"visible"})));
+          parent.subCleanup=()=>{cleanup();sub.remove();b.setAttribute("aria-expanded","false");parent.subTrigger=null;};
+          sub.addEventListener("keydown",e=>{e.stopPropagation();const rows=items(sub),index=rows.indexOf(document.activeElement);if(e.key==="ArrowLeft"||e.key==="Escape"){parent.subCleanup();b.focus();}else if(e.key==="ArrowDown"||e.key==="ArrowUp"){e.preventDefault();rows[(index+(e.key==="ArrowDown"?1:rows.length-1))%rows.length]?.focus();}});
+        };
+        b.addEventListener("pointerenter",expand);
+        b.addEventListener("click",e=>{e.stopPropagation();expand();});
+        b.addEventListener("keydown",e=>{if(e.key==="ArrowRight"){e.preventDefault();expand();active?.popup.querySelector('.ui-submenu button')?.focus();}});
+        content.append(b);continue;
+      }
+      b.addEventListener("pointerenter",()=>active?.subCleanup?.());
       b.addEventListener("click", e => {
         e.stopPropagation(); close(true);
         Promise.resolve().then(() => item.action?.()).catch(error => document.dispatchEvent(new CustomEvent("canvas-ui-error", { detail: error })));
@@ -171,9 +198,39 @@ window.CanvasUI = (() => {
       content.querySelectorAll("button,a").forEach(el => el.setAttribute("role", "menuitem"));
       open(content, { anchor: summary, label: summary.getAttribute("aria-label") || summary.textContent.trim(), placement: details.closest(".creation-dock") ? "top-end" : "bottom-start", onClose: () => { content.classList.remove("ui-static-menu"); details.append(content); } });
     });
-    content.addEventListener("click", e => { if (e.target.closest("button,a")) close(); });
+    // Canvas button handlers stop bubbling; dismiss before the item action runs.
+    content.addEventListener("click", e => { if (e.target.closest("button,a")) close(); }, true);
+  }
+  const tabLists = new WeakSet();
+  function enhanceTabs(list) {
+    if (tabLists.has(list)) return;
+    tabLists.add(list);
+    const indicator = create("span", "tab-indicator");
+    indicator.setAttribute("aria-hidden", "true"); list.prepend(indicator);
+    let initialized = false, animation;
+    const update = () => {
+      const tab = list.querySelector('[role="tab"][aria-selected="true"]');
+      if (!tab || !tab.offsetWidth) { initialized = false; return; }
+      const x = tab.offsetLeft - 4, width = tab.offsetWidth;
+      animation?.stop();
+      if (initialized && !reducedMotion.matches && window.Motion) animation = Motion.animate(indicator, { x, width }, { type: "spring", stiffness: 420, damping: 36 });
+      else { indicator.style.transform = `translateX(${x}px)`; indicator.style.width = width + "px"; }
+      initialized = true;
+    };
+    new MutationObserver(update).observe(list, { attributes: true, attributeFilter: ["aria-selected"], subtree: true });
+    new ResizeObserver(update).observe(list); update();
+    list.addEventListener("keydown", e => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+      const tabs = [...list.querySelectorAll('[role="tab"]')], index = tabs.indexOf(document.activeElement);
+      if (index < 0) return;
+      e.preventDefault();
+      const next = e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : (index + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[next].click(); tabs[next].focus();
+    });
   }
   function enhance(root = document) {
+    if (root.matches?.(".asset-tabs,.view-tabs")) enhanceTabs(root);
+    root.querySelectorAll?.(".asset-tabs,.view-tabs").forEach(enhanceTabs);
     if (root.matches?.("select")) enhanceSelect(root);
     root.querySelectorAll?.("select").forEach(enhanceSelect);
     if (root.matches?.("details")) enhanceDetails(root);

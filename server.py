@@ -27,6 +27,7 @@ from urllib.request import urlopen, Request
 from cloud_images import CloudImages
 from cloud_workspace import CloudWorkspace
 import lingganya_client
+import script_studio
 from board_export import build_export
 from board_store import BoardStore, BoardConflict
 from inspiration_library import InspirationLibrary
@@ -664,11 +665,13 @@ def validate_task_input(
         raise ValueError("不支持的任务类型")
     if not prompt:
         raise ValueError("至少输入一条提示词")
-    if profile in {lingganya_client.PROFILE, lingganya_client.VIDEO_PROFILE}:
-        if kind != ("video" if profile == lingganya_client.VIDEO_PROFILE else "image"):
+    if profile in lingganya_client.PROFILES:
+        if kind != ("video" if profile in lingganya_client.VIDEO_PROFILES else "image"):
             raise ValueError("模型与任务类型不匹配")
         if profile == lingganya_client.VIDEO_PROFILE and (not str(duration).isdigit() or not 5 <= int(duration) <= 15):
             raise ValueError("SD 2.0 Mini 时长必须为 5–15 秒")
+        if profile == lingganya_client.PX_PROFILE and (not str(duration).isdigit() or not 5 <= int(duration) <= 30):
+            raise ValueError("SD 2.5 PX VIP 时长必须为 5–30 秒")
         lingganya_client.validate(profile, prompt, ratio, resolution, references)
         return "lingganya"
     if profile.startswith("hfsy-"):
@@ -956,6 +959,34 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/script/status":
+            return self.respond_json(script_studio.connection(private_env_value))
+        if path == "/api/script/skills":
+            with script_studio.LOCK: return self.respond_json({"skills": script_studio.skills(), "active_install": next((dict(j) for j in script_studio.JOBS.values() if j.get("mode")=="install" and not j.get("settled",True)),None)})
+        if path.startswith("/api/script/conversations/"):
+            try: return self.respond_json({"conversations":script_studio.conversations(path.rsplit("/",1)[-1])})
+            except ValueError as exc: return self.respond_json({"error":str(exc)}, HTTPStatus.BAD_REQUEST)
+        if path.startswith("/api/script/history/"):
+            try: return self.respond_json(script_studio.history(path.rsplit("/",1)[-1]))
+            except ValueError as exc: return self.respond_json({"error":str(exc)}, HTTPStatus.BAD_REQUEST)
+        if path.startswith("/api/script/events/"):
+            ident=path.rsplit("/",1)[-1]
+            with script_studio.LOCK:
+                if ident not in script_studio.JOBS:return self.respond_json({"error":"任务不存在"},HTTPStatus.NOT_FOUND)
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type","text/event-stream; charset=utf-8")
+            self.send_header("X-Accel-Buffering","no")
+            self.end_headers()
+            try:
+                for event in script_studio.event_stream(ident):
+                    self.wfile.write(event);self.wfile.flush()
+            except (BrokenPipeError,ConnectionResetError):pass
+            self.close_connection=True
+            return
+        if path.startswith("/api/script/jobs/"):
+            with script_studio.LOCK:
+                job=script_studio.JOBS.get(path.rsplit("/",1)[-1])
+                return self.respond_json(dict(job) if job else {"error":"任务不存在"}, HTTPStatus.OK if job else HTTPStatus.NOT_FOUND)
         if path == "/api/health":
             return self.respond_json(health_flags())
         if path == "/api/tasks":
@@ -998,7 +1029,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         if path in {"/cloud-images.json", "/cloud-images.tmp"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        if path not in {"/", "/index.html", "/app.js", "/style.css", "/canvas.html", "/canvas.js", "/canvas.css", "/canvas-ui.js", "/canvas-ui.css", "/vendor/floating-ui/core.min.js", "/vendor/floating-ui/dom.min.js", "/vendor/motion/motion.js"}:
+        if path not in {"/", "/index.html", "/app.js", "/style.css", "/canvas.html", "/canvas.js", "/rich-prompt.js", "/canvas-orb.js", "/canvas.css", "/canvas-ui.js", "/canvas-ui.css", "/script.html", "/script-app.js", "/script-app.css", "/vendor/floating-ui/core.min.js", "/vendor/floating-ui/dom.min.js", "/vendor/motion/motion.js"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         return super().do_GET()
@@ -1045,7 +1076,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        cloud_info = cloud_media_info(target)
+        cloud_info = None if relative.startswith("trash/") else cloud_media_info(target)
         thumbnail = "thumbnail=1" in urlparse(self.path).query
         local_exists = target.is_file()
         if not local_exists and not cloud_info:
@@ -1118,6 +1149,18 @@ class StudioHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
+            if path == "/api/script/settings":
+                return self.respond_json(script_studio.save_connection(self.read_json(),private_env_value))
+            if path == "/api/script/attachments":
+                return self.respond_json({"attachment":script_studio.upload_attachment(self.read_json(max_bytes=28*1024*1024))})
+            if path == "/api/script/skills":
+                return self.respond_json(script_studio.start_install(self.read_json(max_bytes=2*1024*1024),private_env_value))
+            if path == "/api/script/conversation":
+                return self.respond_json(script_studio.select_conversation(self.read_json()))
+            if path == "/api/script/chat":
+                return self.respond_json(script_studio.start(self.read_json(),private_env_value))
+            if path == "/api/script/cancel":
+                return self.respond_json(script_studio.cancel(str(self.read_json().get("id",""))))
             if path == "/api/boards/export":
                 content = build_export(self.read_json(max_bytes=8 * 1024 * 1024),
                                        {"results": RESULTS_DIR, "collections": COLLECTIONS_DIR, "uploads": UPLOADS_DIR, "inspirations": INSPIRATIONS_DIR}, CLOUD_WORKSPACE or CLOUD_IMAGES, private_env_value)
@@ -1151,6 +1194,11 @@ class StudioHandler(SimpleHTTPRequestHandler):
                         CLOUD_SYNC.update(running=True, synced=0, failed=0)
                         threading.Thread(target=sync_cloud_images, name="cloud-image-sync", daemon=True).start()
                 return self.respond_json({"ok": True, **cloud_status()}, HTTPStatus.ACCEPTED)
+            purge_match = re.fullmatch(r"/api/trash/([A-Za-z0-9_-]+)/purge", path)
+            if purge_match:
+                with LOCK:
+                    shutil.rmtree(trash_entry(purge_match.group(1)))
+                return self.respond_json({"ok": True})
             restore_match = re.fullmatch(r"/api/trash/([A-Za-z0-9_-]+)/restore", path)
             if restore_match:
                 restore_trash(restore_match.group(1))

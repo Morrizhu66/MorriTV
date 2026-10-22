@@ -67,7 +67,23 @@ class LingganyaContractTests(unittest.TestCase):
             with self.assertRaises(ValueError):client.generate(data,'secret')
         request.assert_not_called()
         with self.assertRaises(ValueError):client.validate(client.PROFILE,'x','1:1','1K',[{'mime':'video/mp4'}])
-        with self.assertRaises(ValueError):client.validate(client.PROFILE,'x','16:9','4K',[])
+        with self.assertRaises(ValueError):client.validate(client.PROFILE,'x','3:2','4K',[])
+
+    def test_sunburst_model_and_size(self):
+        data=task(); data.update(profile=client.SUNBURST_PROFILE,ratio='16:9',resolution='4K')
+        with patch.object(client,'request',return_value=response({'data':[{'b64_json':base64.b64encode(b'image').decode()}]})) as request:
+            client.generate(data,'secret')
+        payload=json.loads(request.call_args.args[2])
+        self.assertEqual(payload['model'],'gpt-image-2.5-sunburst')
+        self.assertEqual(payload['size'],'4096x2304')
+
+    def test_smart_ratio_matches_first_reference(self):
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'portrait.png'; Image.new('RGB',(100,180)).save(path)
+            refs=[{'path':str(path),'mime':'image/png'}]
+            self.assertEqual(client.image_size(client.PROFILE,'adaptive','2K',refs),'1152x2048')
+        self.assertEqual(client.image_size(client.PROFILE,'adaptive','1K',[]),'1024x1024')
 
     def test_credentials_are_removed_on_cross_origin_redirect(self):
         req=Request(client.BASE_URL+'/content',headers={'Authorization':'Bearer secret'})
