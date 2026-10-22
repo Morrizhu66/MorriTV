@@ -654,7 +654,6 @@ function buildGenerationEditor(n, expanded = false) {
       }
     });
     if (n.type !== "text") {
-      if (n.type === "image" && !hasResult) heading.insertBefore(iconButton("上传图片", "upload", () => chooseReplacement(n)), heading.querySelector(".expand-editor"));
     }
     editor.append(prompt);
     if(n.type!=="text"){

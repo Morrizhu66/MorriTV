@@ -678,3 +678,8 @@ body.light .project-pill .brand img{filter:invert(1) hue-rotate(180deg);}
 /* SVG paths use their own selection highlight, never a rectangular focus ring. */
 .edge-hit:focus,.edge-hit:focus-visible{outline:none;box-shadow:none;}
 .edge-hit:focus-visible{stroke:var(--accent);stroke-width:2.5;}
+
+/* Use quiet theme feedback instead of native blue focus rectangles. */
+*:focus,*:focus-visible{outline:none!important;}
+:is(input,textarea,select,[contenteditable="true"],[role="textbox"]):focus{box-shadow:none!important;--tw-ring-shadow:0 0 #0000;--tw-ring-offset-shadow:0 0 #0000;}
+:is(button,a,summary,[role="button"],[role="menuitem"]):focus-visible{background-color:var(--raised,var(--color-muted));}
