@@ -665,5 +665,7 @@ body.light .recycle-dialog{background:var(--panel);color:var(--ink);border-color
 .rich-prompt{cursor:text;user-select:text;-webkit-user-select:text;}
 
 /* Generated MorriTV identity: compact, consistent in both themes. */
-.project-pill .brand{display:flex;align-items:center;padding:0;flex:none;overflow:hidden;border-radius:7px;background:#000;}
-.project-pill .brand img{display:block;width:112px;height:46px;object-fit:contain;}
+.project-pill .brand{display:flex;align-items:center;justify-content:center;padding:0;flex:none;width:88px;height:26px;overflow:hidden;border-radius:0;background:transparent;mix-blend-mode:screen;}
+.project-pill .brand img{display:block;width:88px;height:auto;max-width:none;flex:none;}
+body.light .project-pill .brand{mix-blend-mode:multiply;}
+body.light .project-pill .brand img{filter:invert(1) hue-rotate(180deg);}
