@@ -193,7 +193,7 @@ def finish_install(text,attachments):
     return item
 
 def run(job,state,prompt,selected,key,attachments=None):
-    process=None;timer=None;terminal='failed';attachments=attachments or []
+    process=None;terminal='failed';attachments=attachments or []
     try:
         with LOCK:
             if job['status']=='cancelled':return
@@ -205,7 +205,6 @@ def run(job,state,prompt,selected,key,attachments=None):
         with LOCK:
             PROCESSES[job['id']]=process
             if job['status']=='cancelled':process.terminate()
-        timer=threading.Timer(300,lambda:process.terminate() if process.poll() is None else None);timer.start()
         process.stdin.write(json.dumps({'session_id':state['session_id'],'mode':job.get('mode','chat'),'reasoning_effort':job.get('reasoning_effort','high'),'prompt':prompt,'attachments':attachments,'skill_dirs':[str(mounted)],'skill_names':[s['id'] for s in selected],'skill_labels':{s['id']:s['name'] for s in selected}}))
         process.stdin.close()
         for line in process.stdout:
@@ -214,7 +213,7 @@ def run(job,state,prompt,selected,key,attachments=None):
             with LOCK:
                 if change.get('status') in {'completed','failed'}:terminal=change.pop('status')
                 if job['status']!='cancelled':job.update({k:v for k,v in change.items() if k in {'text','status','activity','error','activities','duration'}})
-        process.wait(timeout=10);timer.cancel()
+        process.wait(timeout=10)
         with LOCK:
             if terminal=='failed' and not job.get('error') and job['status']!='cancelled':job['error']='脚本服务启动失败或等待超时，请重试'
             if terminal=='completed' and job.get('mode')=='install' and job['status']!='cancelled':
@@ -228,7 +227,6 @@ def run(job,state,prompt,selected,key,attachments=None):
         with LOCK:
             if job['status']!='cancelled':job.update(error='脚本服务暂不可用，请检查连接设置')
     finally:
-        if timer:timer.cancel()
         if process and process.poll() is None:process.terminate()
         with LOCK:
             PROCESSES.pop(job['id'],None)
