@@ -1286,13 +1286,24 @@ function showMentions(n, input, browse = false) {
   menu.style.top = Math.min(r.bottom + 3, innerHeight - 300) + "px";
   menu.hidden = false;
 }
-let edgeFrame;
+let edgeFrame, selectedEdge = null;
+function disconnectEdge(n, ref) {
+  checkpoint();
+  if (ref.extracted) { const v = version(n); if (v) delete v.sourceFrame; }
+  else {
+    n.refs = n.refs.filter(r => r !== ref);
+    if (!n.refs.some(r => r.name === ref.name)) n.prompt = (n.prompt || '').split('@' + ref.name).join('');
+  }
+  selectedEdge = null;
+  touch(); render();
+}
+
 function drawEdges() {
   if (edgeFrame) return;
   edgeFrame = requestAnimationFrame(() => { edgeFrame = 0; paintEdges(); });
 }
 function paintEdges() {
-  const svg = $("#edges"), previous = new Map([...svg.querySelectorAll("[data-edge]")].map(p => [p.dataset.edge, p]));
+  const svg = $("#edges"); svg.querySelectorAll(".edge-hit,.edge-flow").forEach(p => p.remove()); const previous = new Map([...svg.querySelectorAll("[data-edge]")].map(p => [p.dataset.edge, p]));
   for (const n of board().nodes) {
     if (hiddenNode(n)) continue;
     const sourceFrame = version(n)?.sourceFrame;
@@ -1309,10 +1320,21 @@ function paintEdges() {
       p.setAttribute(
         "class",
         "edge" +
-          (ref.extracted ? " extracted" : "") + (ref.awaiting ? " awaiting" : "") +
+          (selectedEdge?.key === key ? " edge-selected" : "") + (ref.extracted ? " extracted" : "") + (ref.awaiting ? " awaiting" : "") +
           (selected.has(n.id) || selected.has(source.id) ? " highlight" : ""),
       );
       if (!p.isConnected) svg.append(p);
+      const current = tasksByNode.get(`${boardId}:${n.id}`)?.[0];
+      if (pending.has(n.id) || (current && ["queued", "running"].includes(current.status))) {
+        const flow = p.cloneNode(); flow.removeAttribute("data-edge"); flow.setAttribute("class", "edge edge-flow"); flow.setAttribute("pathLength", "100"); svg.append(flow);
+      }
+      const hit = p.cloneNode(); hit.removeAttribute("data-edge"); hit.setAttribute("class", "edge-hit");
+      hit.setAttribute("tabindex", "0"); hit.setAttribute("role", "button"); hit.setAttribute("aria-label", `${source.name} → ${n.name}，按 Delete 断开引用`);
+      hit.onpointerdown = e => {e.stopPropagation();};
+      hit.onclick = e => {e.stopPropagation(); selected.clear(); selectedEdge={key,n,ref}; drawEdges();};
+      hit.oncontextmenu = e => {e.preventDefault();e.stopPropagation();selectedEdge={key,n,ref};drawEdges();CanvasUI.menu([{label:"断开引用",danger:true,action:()=>disconnectEdge(n,ref)}],{point:{x:e.clientX,y:e.clientY},label:"连线操作"});};
+      hit.onkeydown = e => {if (["Delete","Backspace"].includes(e.key)){e.preventDefault();e.stopPropagation();disconnectEdge(n,ref);}};
+      svg.append(hit);
     }
   }
   previous.forEach(p => p.remove());
@@ -2752,6 +2774,7 @@ $("#viewport").addEventListener(
   { passive: false },
 );
 $("#viewport").addEventListener("pointerdown", (e) => {
+  if(selectedEdge){selectedEdge=null;drawEdges();}
   if (
     e.target.closest(
       ".node,.canvas-top,.navigation,.creation-tools,#minimap,#empty,#reference-mode",
@@ -2861,7 +2884,7 @@ document.addEventListener("keydown", (e) => {
     duplicate();
   } else if (["Delete", "Backspace"].includes(e.key)) {
     e.preventDefault();
-    removeNodes();
+    if(selectedEdge) disconnectEdge(selectedEdge.n, selectedEdge.ref); else removeNodes();
   } else if (
     !e.metaKey &&
     !e.ctrlKey &&

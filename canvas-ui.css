@@ -669,3 +669,12 @@ body.light .recycle-dialog{background:var(--panel);color:var(--ink);border-color
 .project-pill .brand img{display:block;width:88px;height:auto;max-width:none;flex:none;}
 body.light .project-pill .brand{mix-blend-mode:multiply;}
 body.light .project-pill .brand img{filter:invert(1) hue-rotate(180deg);}
+
+.edge-hit{fill:none;stroke:transparent;stroke-width:14;vector-effect:non-scaling-stroke;pointer-events:stroke;cursor:pointer;}
+.edge.edge-selected{stroke:var(--accent);stroke-width:2.5;opacity:1;}
+.edge.edge-flow{pointer-events:none;stroke:var(--accent);stroke-width:2.5;opacity:.95;stroke-dasharray:12 88;animation:edge-sweep 1.8s linear infinite;}
+@keyframes edge-sweep{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}
+@media(prefers-reduced-motion:reduce){.edge.edge-flow{animation:none;stroke-dasharray:none;opacity:.6;}}
+/* SVG paths use their own selection highlight, never a rectangular focus ring. */
+.edge-hit:focus,.edge-hit:focus-visible{outline:none;box-shadow:none;}
+.edge-hit:focus-visible{stroke:var(--accent);stroke-width:2.5;}

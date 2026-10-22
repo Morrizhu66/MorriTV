@@ -178,3 +178,12 @@ test('editing text never starts a node move or modifies selection', () => {
     assert.equal(editingCalls,1);
   }
 });
+test('disconnecting a reference preserves source and other references',()=>{
+ const a={nodeId:'a',name:'hero'},b={nodeId:'b',name:'place'};
+ const n={refs:[a,b],prompt:'@hero walks to @place'};
+ const c=vm.createContext({checkpoint(){},touch(){},render(){},version:n=>n.versions?.[0]});
+ vm.runInContext(section('function disconnectEdge(', 'function drawEdges('),c);
+ c.disconnectEdge(n,a);assert.equal(n.refs.length,1);assert.equal(n.refs[0],b);assert.equal(n.prompt,' walks to @place');
+ const extracted={versions:[{sourceFrame:{nodeId:'video'},url:'still.png'}]};
+ c.disconnectEdge(extracted,{extracted:true});assert.equal(extracted.versions[0].sourceFrame,undefined);assert.equal(extracted.versions[0].url,'still.png');
+});
