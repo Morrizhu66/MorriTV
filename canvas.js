@@ -42,6 +42,9 @@ const ICONS = {
     '<path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><rect x="7" y="7" width="10" height="10" rx="1"/>',
   check: '<path d="m5 12 4 4L20 5"/>',
   edit: '<path d="m14 5 5 5M4 20l5-1L21 7l-5-5L4 14Z"/>',
+  person: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/>',
+  landscape: '<path d="M3 20h18L15 8l-5 8-3-4Z"/><circle cx="6" cy="6" r="2"/>',
+  layers: '<rect x="3" y="3" width="13" height="13" rx="2"/><path d="M8 20h11a2 2 0 0 0 2-2V8"/>',
   frame:
     '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4m10 0h4M3 15h4m10 0h4"/>',
 };
@@ -59,25 +62,13 @@ function iconButton(label, name, fn) {
   return b;
 }
 function actionMenu(label, entries, cls) {
-  const details = make("details", cls);
-  const summary = make("summary", "", "···");
-  summary.setAttribute("aria-label", label);
-  const content = make("div", "dropdown");
-  entries.forEach(([text, fn]) =>
-    content.append(
-      button(
-        text,
-        () => {
-          details.open = false;
-          return fn();
-        },
-        "menu-item",
-      ),
-    ),
-  );
-  details.append(summary, content);
-  return details;
+  const trigger = button("···", e => CanvasUI.menu(entries, { anchor: e.currentTarget, label }), cls || "");
+  trigger.setAttribute("aria-label", label);
+  trigger.setAttribute("aria-haspopup", "menu");
+  trigger.setAttribute("aria-expanded", "false");
+  return trigger;
 }
+
 function syncSelection() {
   document.querySelectorAll(".node").forEach((el) => {
     el.classList.toggle("selected", selected.has(el.dataset.id));
@@ -155,9 +146,32 @@ let doc = { revision: 0, projects: [] },
   pending = new Set(),
   space = false,
   pricing = null;
+const assetById = new Map(), taskById = new Map(), tasksByNode = new Map();
+let nodeIndex = new Map(), hiddenNodes = new Set(), indexedBoard = null, indexedNodes = null, indexedLength = -1;
+function rebuildAssetIndex() { assetById.clear(); assets.forEach(a => assetById.set(a.id, a)); }
+function rebuildTaskIndex() {
+  taskById.clear(); tasksByNode.clear();
+  for (const task of tasks) {
+    taskById.set(task.id, task);
+    const key = `${task.board_id}:${task.node_id}`;
+    if (!tasksByNode.has(key)) tasksByNode.set(key, []);
+    tasksByNode.get(key).push(task);
+  }
+  for (const list of tasksByNode.values()) list.sort((a,b) => b.created_at - a.created_at);
+}
+function indexBoard() {
+  const b = board();
+  indexedBoard = b; indexedNodes = b?.nodes; indexedLength = b?.nodes.length || 0;
+  nodeIndex = new Map((b?.nodes || []).map(n => [n.id, n]));
+  hiddenNodes = new Set((b?.nodes || []).filter(n => n.type === "group" && n.collapsed).flatMap(n => n.members || []));
+}
+
 const project = () => doc.projects.find((p) => p.id === projectId);
 const board = () => project()?.boards.find((b) => b.id === boardId);
-const node = (id) => board()?.nodes.find((n) => n.id === id);
+const node = (id) => {
+  if (indexedBoard !== board() || indexedNodes !== board()?.nodes || indexedLength !== board()?.nodes.length) indexBoard();
+  return nodeIndex.get(id);
+};
 const version = (n) =>
   n?.versions?.find((v) => v.id === n.currentVersion) || n?.versions?.at(-1);
 const thumb = (v) =>
@@ -165,18 +179,18 @@ const thumb = (v) =>
     ? v.url + "?thumbnail=1"
     : v?.url;
 const mediaURL = (v) =>
-  assets.find((a) => a.id === v?.assetId)?.url ||
-  tasks.find((t) => t.id === v?.taskId)?.[
+  assetById.get(v?.assetId)?.url ||
+  taskById.get(v?.taskId)?.[
     v.kind === "video" ? "local_video_url" : "local_image_url"
   ] ||
   v?.url;
 const nodeSignature = (n) =>
   JSON.stringify([
-    n,
-    tasks
-      .filter((t) => t.node_id === n.id && t.board_id === boardId)
-      .map((t) => [t.id, t.status, t.error]),
+    { ...n, x: 0, y: 0 },
+    (tasksByNode.get(`${boardId}:${n.id}`) || []).map(t => [t.id, t.status, t.error]),
     pending.has(n.id),
+    replacementUploads.has(n.id),
+    board().shots.map(s => [s.id,s.name]),
     pricing,
   ]);
 const statusName = (s) =>
@@ -207,18 +221,22 @@ function journal() {
     $("#save-state").textContent = "浏览器备份空间不足，请保持页面打开";
   }
 }
+let journalTimer;
 function touch() {
   if (loadFailed) return;
   dirty = true;
   changed++;
   $("#save-state").textContent = "保存中…";
-  journal();
+  clearTimeout(journalTimer);
+  journalTimer = setTimeout(journal, 180);
   clearTimeout(saveTimer);
   saveTimer = setTimeout(save, 550);
 }
 async function save() {
   if (saving || !dirty || loadFailed) return;
   saving = true;
+  clearTimeout(journalTimer);
+  journal();
   const serial = changed;
   try {
     const result = await api("/api/boards", {
@@ -227,10 +245,11 @@ async function save() {
       body: JSON.stringify(doc),
     });
     doc.revision = result.revision;
+    doc.storage = result.storage;
     if (changed === serial) {
       dirty = false;
       localStorage.removeItem("studio-board-draft");
-      $("#save-state").textContent = "已保存";
+      $("#save-state").textContent = doc.storage === "cloud" ? "云端已保存" : "已保存（本地）";
       $("#save-notice").hidden = true;
     } else journal();
   } catch (e) {
@@ -243,8 +262,8 @@ async function save() {
     if (e.message.includes("另一个窗口")) loadFailed = true;
   } finally {
     saving = false;
-    if (dirty && !loadFailed && changed !== serial)
-      saveTimer = setTimeout(save, 600);
+    if (dirty && !loadFailed)
+      saveTimer = setTimeout(save, changed !== serial ? 600 : 6000);
   }
 }
 function checkpoint() {
@@ -265,6 +284,7 @@ function history(from, to) {
     clone({ nodes: board().nodes, shots: board().shots, view: board().view }),
   );
   Object.assign(board(), from.pop());
+  indexBoard();
   selected.clear();
   touch();
   render();
@@ -325,33 +345,51 @@ function renderNavigation() {
     ? `${board().nodes.length} 个节点`
     : "";
 }
-function hiddenNode(n) {
-  return board().nodes.some(
-    (g) => g.type === "group" && g.collapsed && g.members?.includes(n.id),
-  );
+function hiddenNode(n) { return hiddenNodes.has(n.id); }
+function renderNodes() {
+  indexBoard();
+  const root = $("#nodes"), existing = new Map([...root.children].map(el => [el.dataset.id, el]));
+  let slot = root.firstElementChild;
+  for (const n of board().nodes) {
+    if (hiddenNode(n)) continue;
+    const old = existing.get(n.id), signature = nodeSignature(n);
+    let el = old;
+    if (!old || old._node !== n || old.dataset.signature !== signature) {
+      el = renderNode(n);
+      if (old) { old.querySelectorAll("video").forEach(media => nodeMediaObserver.unobserve(media)); old.replaceWith(el); }
+      if (slot === old) slot = el;
+    }
+    el.style.left = n.x + "px"; el.style.top = n.y + "px";
+    if (el !== slot) root.insertBefore(el, slot);
+    slot = el.nextElementSibling;
+    existing.delete(n.id);
+  }
+  existing.forEach(el => { el.querySelectorAll("video").forEach(media => nodeMediaObserver.unobserve(media)); el.remove(); });
+  syncSelection();
 }
 function render() {
   if (!board()) return;
   renderNavigation();
   updateHistoryControls();
-  $("#nodes").replaceChildren(
-    ...board()
-      .nodes.filter((n) => !hiddenNode(n))
-      .map(renderNode),
-  );
+  renderNodes();
   $("#empty").hidden = board().nodes.length > 0;
   applyView();
   drawEdges();
   renderShots(true);
   if ($("#library-dialog").open) renderAssets();
 }
+let viewFrame;
 function applyView() {
+  if (viewFrame) return;
+  viewFrame = requestAnimationFrame(() => { viewFrame = 0; paintView(); });
+}
+
+function paintView() {
   const v = board().view;
   $("#world").style.transform = `translate(${v.x}px,${v.y}px) scale(${v.z})`;
   $("#zoom-label").textContent = Math.round(v.z * 100) + "%";
   $("#viewport").style.backgroundSize = `${22 * v.z}px ${22 * v.z}px`;
   $("#viewport").style.backgroundPosition = `${v.x}px ${v.y}px`;
-  drawMini();
 }
 function worldPoint(x, y) {
   const rect = $("#viewport").getBoundingClientRect(),
@@ -428,9 +466,7 @@ function selector(options, value, fn, cls) {
 function renderNode(n) {
   const focused = selected.size === 1 && selected.has(n.id);
   const hasResult = !!n.versions?.length;
-  const current = tasks
-    .filter((t) => t.node_id === n.id && t.board_id === boardId)
-    .sort((a, b) => b.created_at - a.created_at)[0];
+  const current = tasksByNode.get(`${boardId}:${n.id}`)?.[0];
   const el = make(
     "article",
     "node" +
@@ -441,6 +477,8 @@ function renderNode(n) {
       (n.type === "text" ? " text-node" : "") +
       (n.source ? " source" : ""),
   );
+  el._node = n;
+  el.classList.toggle("is-uploading", replacementUploads.has(n.id));
   el.dataset.id = n.id;
   el.dataset.signature = nodeSignature(n);
   el.setAttribute("aria-label", n.name);
@@ -451,21 +489,9 @@ function renderNode(n) {
   type.append(icon(n.type === "group" ? "group" : n.type));
   const title = make("span", "node-name", n.name);
   title.title = n.name;
-  const settings = actionMenu(
-    "节点菜单",
-    [
-      ["重命名与设置", () => editNode(n)],
-      [
-        "复制节点",
-        () => {
-          copyBuffer = [clone(n)];
-          duplicate();
-        },
-      ],
-      ["移除节点", () => removeNodes([n.id])],
-    ],
-    "node-menu",
-  );
+  const settings = button("···", e => CanvasUI.menu(nodeMenuEntries(n), { anchor: e.currentTarget, label: "节点操作" }), "node-menu-trigger");
+  settings.setAttribute("aria-label", "节点菜单");
+  settings.setAttribute("aria-haspopup", "menu");
   header.append(type, title, settings);
   el.append(header);
   header.addEventListener("pointerdown", (e) => startMove(e, n));
@@ -520,6 +546,7 @@ function renderNode(n) {
       make("small", "", n.prompt || "选中节点，开始描述你的画面"),
     );
     body.append(placeholder);
+    if (n.type === "image") body.append(button("上传图片", () => chooseReplacement(n), "empty-node-upload"));
     if (current) {
       const state = make(
         "span",
@@ -536,7 +563,8 @@ function renderNode(n) {
       v.kind === "video" ? mediaURL(v) : thumb({ ...v, url: mediaURL(v) });
     if (v.kind === "video") {
       media.controls = true;
-      media.preload = "metadata";
+      media.preload = "none";
+      nodeMediaObserver.observe(media);
       media.muted = true;
       media.playsInline = true;
       media.addEventListener("pointerdown", (e) => {
@@ -546,6 +574,7 @@ function renderNode(n) {
     } else {
       media.alt = n.name;
       media.loading = "lazy";
+      media.decoding = "async";
       media.addEventListener("dblclick", (e) => {
         e.stopPropagation();
         previewVersions([v]);
@@ -597,6 +626,7 @@ function renderNode(n) {
       actions.append(
         iconButton("修改图片", "edit", () => derive(n, "image")),
         iconButton("生成视频", "video", () => derive(n, "video")),
+        iconButton("重新上传", "upload", () => chooseReplacement(n)),
       );
     else
       actions.append(
@@ -626,6 +656,7 @@ function renderNode(n) {
             )),
         ],
       );
+    extra.push(["收录到角色库", () => collectNode(n, "character")], ["收录到场景库", () => collectNode(n, "scene")]);
     extra.push([
       "下载原文件",
       () =>
@@ -697,6 +728,12 @@ function renderNode(n) {
       refs.addEventListener("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        const asset = assetById.get(e.dataTransfer.getData("application/studio-asset"));
+        if (asset) {
+          const source = assetNode(asset, { x: n.x - 440, y: n.y });
+          try { addReference(n, source); selected = new Set([n.id]); syncSelection(); drawEdges(); } catch (error) { report(error); }
+          return;
+        }
         const id = e.dataTransfer.getData("application/studio-node");
         if (node(id)) {
           try {
@@ -1011,9 +1048,13 @@ function showMentions(n, input, browse = false) {
   menu.style.top = Math.min(r.bottom + 3, innerHeight - 300) + "px";
   menu.hidden = false;
 }
+let edgeFrame;
 function drawEdges() {
-  const svg = $("#edges");
-  svg.replaceChildren();
+  if (edgeFrame) return;
+  edgeFrame = requestAnimationFrame(() => { edgeFrame = 0; paintEdges(); });
+}
+function paintEdges() {
+  const svg = $("#edges"), previous = new Map([...svg.querySelectorAll("[data-edge]")].map(p => [p.dataset.edge, p]));
   for (const n of board().nodes) {
     if (hiddenNode(n)) continue;
     const sourceFrame = version(n)?.sourceFrame;
@@ -1023,7 +1064,9 @@ function drawEdges() {
     for (const ref of links) {
       const source = node(ref.nodeId);
       if (!source || hiddenNode(source)) continue;
-      const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      const key = `${n.id}:${ref.id || ref.nodeId}:${ref.extracted || false}`;
+      const p = previous.get(key) || document.createElementNS("http://www.w3.org/2000/svg", "path");
+      p.dataset.edge = key; previous.delete(key);
       const x = source.x + NODE_WIDTH,
         y = source.y + 110,
         tx = n.x,
@@ -1039,13 +1082,14 @@ function drawEdges() {
           (ref.extracted ? " extracted" : "") +
           (selected.has(n.id) || selected.has(source.id) ? " highlight" : ""),
       );
-      svg.append(p);
+      if (!p.isConnected) svg.append(p);
     }
   }
+  previous.forEach(p => p.remove());
   drawMini();
 }
 function drawMini() {
-  if (!board()) return;
+  if (!board() || $("#minimap").hidden) return;
   const mini = $("#minimap");
   mini.replaceChildren();
   const ns = board().nodes.filter((n) => !hiddenNode(n));
@@ -1079,7 +1123,7 @@ function ensureNodeVisible(n) {
     v = board().view;
   const top = viewport.top + 155,
     bottom = viewport.bottom - 115;
-  const left = $("#library-dialog").open ? 350 : 35;
+  const left = $("#library-dialog").open ? $("#library-dialog").getBoundingClientRect().right + 24 : 35;
   const upper = r.top - (n.versions?.length ? 80 : 35) * v.z;
   if (r.height + 80 * v.z > bottom - top) {
     focusNodes([n]);
@@ -1118,19 +1162,20 @@ function focusNodes(ns) {
             400),
       ),
     );
+  const reserved = $("#library-dialog").open ? $("#library-dialog").getBoundingClientRect().right + 20 : 0;
   const z = Math.min(
     1.1,
     Math.max(
       0.15,
       Math.min(
-        (r.width - 100) / (right - left),
+        (r.width - reserved - 100) / (right - left),
         (r.height - 250) / (bottom - top),
       ),
     ),
   );
   board().view = {
     z,
-    x: (r.width - (right - left) * z) / 2 - left * z,
+    x: reserved + (r.width - reserved - (right - left) * z) / 2 - left * z,
     y: 130 + (r.height - 250 - (bottom - top) * z) / 2 - top * z,
   };
   applyView();
@@ -1171,7 +1216,7 @@ function startMove(e, n) {
     .map((id) => node(id))
     .filter(Boolean)
     .map((n) => ({ n, x: n.x, y: n.y }));
-  const move = (ev) => {
+  const paintMove = (ev) => {
     if (!moved && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 4)
       return;
     if (!moved) {
@@ -1191,7 +1236,10 @@ function startMove(e, n) {
     });
     drawEdges();
   };
+  let movementFrame = 0, latestMove;
+  const move = (ev) => { latestMove = ev; if (!movementFrame) movementFrame = requestAnimationFrame(() => { movementFrame = 0; paintMove(latestMove); }); };
   const up = () => {
+    if (movementFrame) { cancelAnimationFrame(movementFrame); movementFrame = 0; paintMove(latestMove); }
     window.dragging = false;
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", up);
@@ -1380,6 +1428,7 @@ async function poll() {
   try {
     const data = await api("/api/tasks");
     tasks = data.tasks;
+    rebuildTaskIndex();
     let mutated = false;
     for (const p of doc.projects)
       for (const b of p.boards)
@@ -1391,12 +1440,7 @@ async function poll() {
             n.pendingSubmission = "";
             mutated = true;
           }
-          for (const t of tasks.filter(
-            (t) =>
-              t.board_id === b.id &&
-              t.node_id === n.id &&
-              t.status === "completed",
-          )) {
+          for (const t of (tasksByNode.get(`${b.id}:${n.id}`) || []).filter(t => t.status === "completed")) {
             if (n.versions?.some((v) => v.taskId === t.id)) continue;
             const url =
               t.kind === "image" ? t.local_image_url : t.local_video_url;
@@ -1431,22 +1475,12 @@ async function poll() {
     $("#task-count").textContent = tasks.filter((t) =>
       ["queued", "running", "paused"].includes(t.status),
     ).length;
-    renderTaskList();
+    if ($("#task-dialog").open) renderTaskList();
     if (
       !document.activeElement.closest("textarea,input,select") &&
-      !window.dragging
+      !window.dragging && !CanvasUI.isOpen
     ) {
-      const chosen = new Set(selected);
-      $("#nodes").replaceChildren(
-        ...board()
-          .nodes.filter((n) => !hiddenNode(n))
-          .map((n) => {
-            const old = $("#nodes").querySelector(`[data-id="${n.id}"]`);
-            if (old?.dataset.signature === nodeSignature(n)) return old;
-            return renderNode(n);
-          }),
-      );
-      selected = chosen;
+      renderNodes();
       drawEdges();
       renderShots();
       if (mutated && selected.size === 1)
@@ -1536,137 +1570,258 @@ function renderTaskList() {
       ),
     );
 }
-async function uploadFiles(files, point = centerPoint()) {
-  for (const [i, file] of [...files].entries()) {
-    if (!file.type.match(/^(image|video)\//)) {
-      toast("仅支持图片与视频素材");
-      continue;
+function rememberAsset(asset) {
+  const index = assets.findIndex(a => a.id === asset.id);
+  if (index < 0) assets.push(asset); else assets[index] = asset;
+  rebuildAssetIndex();
+  return asset;
+}
+async function importAsset(file) {
+  const form = new FormData();
+  form.append("media", file, file.name || "粘贴图片.png");
+  const result = await api("/api/library/assets", { method: "POST", body: form });
+  return rememberAsset(result.asset);
+}
+async function uploadFiles(files, point = centerPoint(), options = {}) {
+  const accepted = [...files].filter(file => /^(image|video)\//.test(file.type));
+  if (!accepted.length) throw new Error("请选择或粘贴图片、视频素材");
+  const origin = board();
+  let completed = 0;
+  for (const [i, file] of accepted.entries()) {
+    toast(`正在导入 ${i + 1} / ${accepted.length}…`);
+    let asset = await importAsset(file);
+    if (options.category) asset = await updateAssetMetadata(asset, { category: options.category, included: true }, false);
+    if (!options.libraryOnly) {
+      const position = { x: point.x + i * 400, y: point.y };
+      if (board() === origin) assetNode(asset, position);
+      else {
+        origin.nodes.push({ id: uid(), type: asset.kind, source: true, name: asset.name, ...position, refs: [], prompt: "", versions: [{ id: uid(), assetId: asset.id, kind: asset.kind, url: asset.url, createdAt: Date.now() }] });
+        touch();
+      }
     }
-    const form = new FormData();
-    form.append("media", file, file.name);
-    const result = await api("/api/library/assets", {
-      method: "POST",
-      body: form,
-    });
-    assets.push(result.asset);
-    assetNode(result.asset, { x: point.x + i * 350, y: point.y });
+    completed++;
   }
-  toast("素材已保存到素材库并加入画板");
+  if ($("#library-dialog").open) renderAssets();
+  if ($("#asset-picker-dialog").open) renderPicker();
+  toast(`已导入 ${completed} 个素材${options.category ? "到" + scopeName(options.category) : options.libraryOnly ? "到素材库" : "到画板"}`);
 }
 function assetNode(asset, point = centerPoint()) {
   return createNode(asset.kind, point, {
-    source: true,
-    name: asset.name,
-    versions: [
-      {
-        id: uid(),
-        assetId: asset.id,
-        kind: asset.kind,
-        url: asset.url,
-        createdAt: Date.now(),
-      },
-    ],
+    source: true, name: asset.name,
+    versions: [{ id: uid(), assetId: asset.id, kind: asset.kind, url: asset.url, createdAt: Date.now() }],
   });
 }
-async function openLibrary() {
-  const data = await api("/api/library");
-  assets = data.assets;
+let replacingImage = null;
+const replacementUploads = new Set();
+const nodeMediaObserver = new IntersectionObserver(entries => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) { entry.target.preload = "metadata"; nodeMediaObserver.unobserve(entry.target); }
+  });
+}, { root: $("#viewport"), rootMargin: "250px" });
+function chooseReplacement(n) {
+  replacingImage = { n, origin: board() };
+  $("#replace-image").value = "";
+  $("#replace-image").click();
+}
+async function replaceImage(file, target) {
+  if (!file || !file.type.startsWith("image/")) throw new Error("请选择一张图片");
+  const { n, origin } = target;
+  replacementUploads.add(n.id);
+  render();
+  try {
+    const asset = await importAsset(file);
+    if (!origin.nodes.includes(n)) { toast("原节点已移除，新图片已保留在素材库"); return; }
+    if (board() === origin) checkpoint();
+    const v = { id: uid(), assetId: asset.id, kind: "image", url: asset.url, createdAt: Date.now() };
+    n.versions ??= [];
+    n.versions.push(v);
+    n.currentVersion = v.id;
+    touch();
+    toast("图片已更新，旧版本和已有引用均已保留");
+  } finally { replacementUploads.delete(n.id); render(); }
+}
+const scopeName = scope => ({ board: "当前画板", character: "角色库", scene: "场景库" })[scope] || "素材库";
+let assetScope = "board", assetSort = "recent", pickerScope = "", libraryLoading = null;
+async function refreshLibrary() {
+  if (!libraryLoading) libraryLoading = api("/api/library").then(data => { assets = data.assets; rebuildAssetIndex(); }).finally(() => libraryLoading = null);
+  return libraryLoading;
+}
+async function openLibrary(scope) {
+  if (scope) assetScope = scope;
   if (!$("#library-dialog").open) $("#library-dialog").show();
   renderAssets();
+  await refreshLibrary();
+  if ($("#library-dialog").open) renderAssets();
 }
-let assetScope = "board",
-  assetObserver;
-function renderAssets() {
-  assetObserver?.disconnect();
-  assetObserver = new IntersectionObserver(
-    (entries) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          entry.target.preload = "metadata";
-          assetObserver.unobserve(entry.target);
-        }
-      });
-    },
-    { root: $("#asset-list"), rootMargin: "100px" },
-  );
-  const q = $("#asset-search").value.toLowerCase(),
-    kind = $("#asset-kind").value;
-  const onBoard = assetScope === "board";
-  const entries = onBoard
-    ? board()
-        .nodes.filter((n) => n.type !== "group")
-        .map((n) => ({
-          id: n.id,
-          name: n.name,
-          kind: n.type,
-          url: mediaURL(version(n)),
-          prompt: n.prompt,
-          node: n,
-        }))
-    : assets;
-  const filtered = entries.filter(
-    (a) =>
-      (!kind || a.kind === kind) &&
-      [a.name, a.prompt, tasks.find((t) => t.id === a.task_id)?.prompt]
-        .join(" ")
-        .toLowerCase()
-        .includes(q),
-  );
-  $("#asset-list").replaceChildren(
-    ...filtered.slice(0, 100).map((a) => {
-      const b = button("", () => {
-        if (onBoard) {
-          selected = new Set([a.id]);
-          render();
-          focusNodes([a.node]);
-        } else {
-          const created = assetNode(a);
-          focusNodes([created]);
-          toast("已加入画板");
-        }
-      });
-      b.className = "asset-item";
-      b.title = onBoard ? "定位到 " + a.name : "添加 " + a.name;
-      const preview = make("div", "asset-preview");
-      if (a.url) {
-        const media = make(a.kind === "video" ? "video" : "img");
-        media.src = a.kind === "image" ? thumb(a) : a.url;
-        if (a.kind === "video") {
-          media.preload = "none";
-          assetObserver.observe(media);
-          media.muted = true;
-        } else {
-          media.loading = "lazy";
-          media.alt = a.name;
-        }
-        preview.append(media);
-      } else preview.append(icon(a.kind));
-      preview.append(
-        make(
-          "span",
-          "asset-type",
-          { image: "图片", video: "视频", text: "文本" }[a.kind] || "素材",
-        ),
-      );
-      b.append(preview, make("span", "asset-name", a.name));
-      return b;
-    }),
-  );
-  if (!filtered.length)
-    $("#asset-list").append(
-      make(
-        "p",
-        "asset-empty",
-        q
-          ? "没有找到匹配的素材"
-          : onBoard
-            ? "上传素材或创建节点，\n它们会出现在这里。"
-            : "素材库还是空的，\n先上传一张参考图吧。",
-      ),
-    );
-  $("#library-note").textContent =
-    `${filtered.length} 个${onBoard ? "节点 · 点击定位" : "素材 · 点击添加到画板"}${filtered.length > 100 ? " · 显示前100个" : ""}`;
+function setAssetScope(scope) {
+  assetScope = scope;
+  $("#asset-search").value = "";
+  $("#asset-kind").value = "";
+  CanvasUI.enhance($("#library-dialog"));
+  renderAssets(true);
 }
+async function updateAssetMetadata(asset, change, notify = true) {
+  const { asset: updated } = await api(`/api/library/assets/${asset.id}/metadata`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change),
+  });
+  rememberAsset(updated);
+  if ($("#library-dialog").open) renderAssets();
+  if ($("#asset-picker-dialog").open) renderPicker();
+  if (notify) toast(change.category ? `${change.included ? "已收录到" : "已移出"}${scopeName(change.category)}${change.included ? "，可跨画板复用" : "，源文件保留"}` : "素材名称已更新");
+  return updated;
+}
+async function collectNode(n, category) {
+  const v = version(n);
+  if (!v) throw new Error("先上传或生成一张图片，再收录到素材库");
+  await refreshLibrary();
+  const asset = assetById.get(v.assetId) || assets.find(a => (v.taskId && a.task_id === v.taskId) || a.url === v.url);
+  if (!asset) throw new Error("未找到源素材，请重新上传后收录");
+  await updateAssetMetadata(asset, { category, included: true });
+}
+function renameAsset(asset) {
+  editDialog("重命名素材", [["name", "素材名称", "text", asset.name]], values => {
+    updateAssetMetadata(asset, { name: values.name }).catch(report);
+  });
+}
+function libraryEntries() {
+  if (assetScope === "board") return board().nodes.filter(n => n.type !== "group").map(n => ({
+    id: n.id, name: n.name, kind: n.type, url: mediaURL(version(n)), prompt: n.prompt, node: n,
+    created_at: (version(n)?.createdAt || 0) / 1000,
+  }));
+  return assets.filter(a => a.categories?.includes(assetScope));
+}
+function filterAssets(entries, query, kind = "") {
+  const q = query.trim().toLocaleLowerCase();
+  const filtered = entries.filter(a => (!kind || a.kind === kind) && (!q || [a.name, a.prompt, taskById.get(a.task_id)?.prompt].join(" ").toLocaleLowerCase().includes(q)));
+  if (assetSort === "name") filtered.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  else filtered.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  return filtered;
+}
+// Window the grid, including its media elements. Even thousands of assets mount only visible rows.
+class AssetGrid {
+  constructor(root, columns) {
+    this.root = root; this.columns = columns; this.entries = []; this.key = ""; this.frame = 0;
+    root.addEventListener("scroll", () => this.schedule(), { passive: true });
+    new ResizeObserver(() => this.schedule()).observe(root);
+  }
+  schedule() { if (!this.frame) this.frame = requestAnimationFrame(() => { this.frame = 0; this.paint(); }); }
+  set(entries, draw, empty, reset = false) {
+    this.entries = entries; this.draw = draw;
+    const top = reset ? 0 : this.root.scrollTop;
+    this.root.replaceChildren(); this.key = "";
+    if (!entries.length) { this.root.append(empty); return; }
+    this.space = make("div", "asset-grid-space");
+    this.window = make("div", "asset-grid-window");
+    this.space.append(this.window); this.root.append(this.space);
+    this.root.scrollTop = top;
+    this.paint();
+    this.root.scrollTop = top;
+    this.schedule();
+  }
+  paint() {
+    if (!this.entries.length || !this.root.clientHeight || !this.space?.isConnected) return;
+    const cols = this.columns(), rowHeight = 204;
+    const rows = Math.ceil(this.entries.length / cols);
+    this.space.style.height = rows * rowHeight + "px";
+    const start = Math.max(0, Math.min(rows - 1, Math.floor(this.root.scrollTop / rowHeight)) - 2);
+    const end = Math.min(rows, Math.ceil((this.root.scrollTop + this.root.clientHeight) / rowHeight) + 2);
+    const key = `${start}:${end}:${cols}`;
+    if (key === this.key) return;
+    this.key = key;
+    this.window.style.transform = `translateY(${start * rowHeight}px)`;
+    this.window.style.gridTemplateColumns = `repeat(${cols},minmax(0,1fr))`;
+    this.window.replaceChildren(...this.entries.slice(start * cols, end * cols).map(this.draw));
+  }
+}
+const libraryGrid = new AssetGrid($("#asset-list"), () => 2);
+const pickerGrid = new AssetGrid($("#picker-list"), () => $("#picker-list").clientWidth < 510 ? 2 : 3);
+function assetCard(a, { picker = false } = {}) {
+  const card = make("article", "asset-card");
+  card.dataset.assetId = a.id;
+  card.draggable = true;
+  card.addEventListener("dragstart", e => {
+    e.dataTransfer.setData(a.node ? "application/studio-node" : "application/studio-asset", a.id);
+    e.dataTransfer.effectAllowed = "copy";
+  });
+  const activate = async () => {
+    if (picker && pickerScope) {
+      await updateAssetMetadata(a, { category: pickerScope, included: true });
+    } else if (a.node) {
+      selected = new Set([a.id]); syncSelection(); drawEdges(); focusNodes([a.node]);
+    } else {
+      if ($("#asset-picker-dialog").open) $("#asset-picker-dialog").close();
+      const n = assetNode(a); focusNodes([n]); toast("已加入画板");
+    }
+  };
+  const main = button("", activate, "asset-card-main");
+  main.setAttribute("aria-label", `${picker && pickerScope ? "收录" : a.node ? "定位" : "添加"} ${a.name}`);
+  const preview = make("div", "asset-preview");
+  if (a.url) {
+    const media = make(a.kind === "video" ? "video" : "img");
+    media.src = a.kind === "image" ? thumb(a) : a.url;
+    if (a.kind === "video") { media.preload = "metadata"; media.muted = true; media.playsInline = true; }
+    else { media.alt = a.name; media.loading = "lazy"; media.decoding = "async"; }
+    media.addEventListener("error", () => preview.classList.add("failed"), { once: true });
+    preview.append(media);
+  } else if (a.kind === "text") preview.append(make("span", "asset-text-preview", a.prompt || "尚未填写文本"));
+  else preview.append(icon(a.kind));
+  preview.append(make("span", "asset-type", { image: "图片", video: "视频", text: "文本" }[a.kind] || "素材"));
+  preview.append(make("span", "asset-hover-label", picker && pickerScope ? (a.categories?.includes(pickerScope) ? "✓ 已收录" : `＋ 收录到${scopeName(pickerScope)}`) : a.node ? "↗ 定位到节点" : "＋ 添加到画板"));
+  const caption = make("span", "asset-caption");
+  const name = make("span", "asset-title", a.name); name.title = a.name;
+  const categories = (a.categories || []).map(scopeName).join(" · ");
+  caption.append(name, make("small", "asset-meta", a.node ? (a.node.source ? "导入素材" : a.url ? "已生成 · 可引用" : "创作节点") : categories || (a.source === "generated" ? "生成记录" : "本地导入")));
+  main.append(preview, caption); card.append(main);
+  const more = button("···", e => {
+    const entries = a.node ? nodeMenuEntries(a.node) : [
+      { label: "添加到画板", glyph: "+", action: () => { $("#asset-picker-dialog").close(); assetNode(a); } },
+      { label: "放大预览", glyph: "↗", action: () => previewVersions([{ ...a, assetId: a.id }]) },
+      { label: "重命名", action: () => renameAsset(a) }, null,
+      ...["character", "scene"].map(category => ({ label: `${a.categories?.includes(category) ? "移出" : "收录到"}${scopeName(category)}`, action: () => updateAssetMetadata(a, { category, included: !a.categories?.includes(category) }) })),
+    ];
+    CanvasUI.menu(entries, { anchor: e.currentTarget, label: "素材操作" });
+  }, "asset-card-more");
+  more.setAttribute("aria-label", a.name + " 素材操作"); card.append(more);
+  return card;
+}
+function emptyAssets(query, picker = false) {
+  const empty = make("div", "library-empty"), art = make("div", "library-empty-art");
+  art.append(icon(query ? "search" : assetScope === "character" ? "person" : assetScope === "scene" ? "landscape" : "layers"));
+  empty.append(art, make("h4", "", query ? "没有找到匹配素材" : picker ? "还没有素材" : assetScope === "board" ? "你的画板，等一个开始" : `建立你的${assetScope === "character" ? "角色" : "场景"}收藏`));
+  empty.append(make("p", "", query ? "换个关键词，或试试其他素材类型。" : assetScope === "board" ? "拖入一张图片，或直接 Ctrl / ⌘ + V。\n画板中的素材会自动出现在这里。" : "把常用参考收录在这里，\n每个镜头都能继续使用。"));
+  if (!query) empty.append(button(picker ? "上传素材" : assetScope === "board" ? "上传第一张素材" : "＋ 添加" + (assetScope === "character" ? "角色" : "场景"), () => picker ? $("#asset-upload").click() : assetScope === "board" ? $("#upload").click() : openAssetPicker(assetScope), "primary"));
+  return empty;
+}
+function renderAssets(reset = false) {
+  const meta = {
+    board: ["画板中的灵感", "图片、视频与文字，随时定位和引用。"],
+    character: ["收藏角色设定，随时引用", "收藏角色设定，复用到每一个镜头。"],
+    scene: ["故事发生的地方", "收录环境与空间，建立统一的视觉世界。"],
+  }[assetScope];
+  $("#library-dialog").dataset.scope = assetScope;
+  $("#asset-heading").textContent = meta[0]; $("#asset-description").textContent = meta[1];
+  document.querySelectorAll("[data-asset-scope]").forEach(tab => tab.setAttribute("aria-selected", String(tab.dataset.assetScope === assetScope)));
+  $("#asset-add").setAttribute("aria-label", assetScope === "board" ? "添加画板素材" : "添加" + scopeName(assetScope));
+  const q = $("#asset-search").value, entries = filterAssets(libraryEntries(), q, $("#asset-kind").value);
+  $("#library-count").textContent = `${entries.length} 个${assetScope === "board" ? "节点" : "素材"}`;
+  $("#library-note").textContent = assetScope === "board" ? "点击定位 · 拖入节点作为参考" : "跨画板复用 · 拖入画板或参考区";
+  libraryGrid.set(entries, a => assetCard(a), emptyAssets(q), reset);
+}
+async function openAssetPicker(scope = "") {
+  pickerScope = scope;
+  $("#picker-search").value = "";
+  $("#picker-title").textContent = scope ? "添加到" + scopeName(scope) : "全部素材";
+  if (!$("#asset-picker-dialog").open) $("#asset-picker-dialog").showModal();
+  renderPicker(true);
+  await refreshLibrary();
+  if ($("#asset-picker-dialog").open) renderPicker();
+}
+function renderPicker(reset = false) {
+  const q = $("#picker-search").value, entries = filterAssets(assets, q);
+  $("#picker-note").textContent = `${entries.length} 个素材${pickerScope ? " · 已收录的素材会保留" : " · 原文件与历史版本保留"}`;
+  pickerGrid.set(entries, a => assetCard(a, { picker: true }), emptyAssets(q, true), reset);
+}
+
 async function extractFrame(n, mode, current = 0, continueVideo = false) {
   const source = clone(version(n));
   if (source?.kind !== "video") throw new Error("请先选择一个视频版本");
@@ -1730,7 +1885,7 @@ async function extractFrame(n, mode, current = 0, continueVideo = false) {
     method: "POST",
     body: form,
   });
-  assets.push(result.asset);
+  rememberAsset(result.asset);
   const created = assetNode(result.asset, { x: n.x + 440, y: n.y });
   version(created).sourceFrame = {
     nodeId: n.id,
@@ -2040,16 +2195,18 @@ function groupSelected() {
     },
   );
 }
-function duplicate() {
+function duplicate(point) {
   if (!copyBuffer.length) return;
   checkpoint();
   const mapping = Object.fromEntries(copyBuffer.map((n) => [n.id, uid()]));
+  const dx = point ? point.x - Math.min(...copyBuffer.map(n => n.x)) : 50;
+  const dy = point ? point.y - Math.min(...copyBuffer.map(n => n.y)) : 50;
   const newNodes = clone(copyBuffer).map((n) => ({
     ...n,
     id: mapping[n.id],
     name: n.name + " 副本",
-    x: n.x + 50,
-    y: n.y + 50,
+    x: n.x + dx,
+    y: n.y + dy,
     runs: [],
     lastSubmission: "",
     pendingSubmission: undefined,
@@ -2068,7 +2225,7 @@ function duplicate() {
 $("#viewport").addEventListener(
   "wheel",
   (e) => {
-    if (e.target.closest("textarea,select,.dropdown,.floating-menu")) return;
+    if (e.target.closest("textarea,select,.dropdown,.floating-menu,.ui-popup")) return;
     e.preventDefault();
     if (e.ctrlKey || e.metaKey)
       zoom(Math.exp(-e.deltaY * 0.006), e.clientX, e.clientY);
@@ -2140,9 +2297,13 @@ $("#viewport").addEventListener("pointerdown", (e) => {
   window.addEventListener("pointerup", up);
 });
 $("#viewport").addEventListener("dragover", (e) => {
-  if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+  if (e.dataTransfer.types.some(type => ["Files", "application/studio-asset", "application/studio-node"].includes(type))) e.preventDefault();
 });
 $("#viewport").addEventListener("drop", (e) => {
+  const asset = assetById.get(e.dataTransfer.getData("application/studio-asset"));
+  if (asset) { e.preventDefault(); assetNode(asset, worldPoint(e.clientX, e.clientY)); return; }
+  const source = node(e.dataTransfer.getData("application/studio-node"));
+  if (source) { e.preventDefault(); selected = new Set([source.id]); syncSelection(); focusNodes([source]); return; }
   if (e.dataTransfer.files.length) {
     e.preventDefault();
     uploadFiles(e.dataTransfer.files, worldPoint(e.clientX, e.clientY)).catch(
@@ -2151,7 +2312,7 @@ $("#viewport").addEventListener("drop", (e) => {
   }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.target.closest("input,textarea,select,dialog")) return;
+  if (CanvasUI.isOpen || CanvasUI.isEditing(e.target) || e.target.closest("select,dialog")) return;
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
     e.preventDefault();
     history(
@@ -2180,11 +2341,9 @@ document.addEventListener("keydown", (e) => {
         .map((n) => n.id),
     );
     render();
-  } else if ((e.metaKey || e.ctrlKey) && e.key === "c") {
-    copyBuffer = [...selected].map(node).filter(Boolean).map(clone);
-    toast("节点已复制");
-  } else if ((e.metaKey || e.ctrlKey) && e.key === "v") {
+  } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "d") {
     e.preventDefault();
+    copyBuffer = [...selected].map(node).filter(Boolean).map(clone);
     duplicate();
   } else if (["Delete", "Backspace"].includes(e.key)) {
     e.preventDefault();
@@ -2211,14 +2370,150 @@ window.addEventListener("blur", () => {
   space = false;
   document.body.classList.remove("panning");
 });
-document.addEventListener("paste", (e) => {
-  if (e.target.closest("input,textarea")) return;
-  const files = [...e.clipboardData.files];
-  if (files.length) {
+const CLIPBOARD_MARKER = "morri-canvas-nodes:v1:";
+function parseNodeClipboard(text) {
+  if (!text?.startsWith(CLIPBOARD_MARKER) || text.length > 8 * 1024 * 1024) return null;
+  try {
+    const list = JSON.parse(text.slice(CLIPBOARD_MARKER.length));
+    if (!Array.isArray(list) || !list.length || list.length > 500 || list.some(n => !n || !["image", "video", "text", "group"].includes(n.type) || typeof n.id !== "string" || typeof n.name !== "string" || !Number.isFinite(n.x) || !Number.isFinite(n.y) || !Array.isArray(n.refs) || !Array.isArray(n.versions))) return null;
+    return list;
+  } catch { return null; }
+}
+function copySelected(ids = [...selected]) {
+  copyBuffer = ids.map(node).filter(Boolean).map(clone);
+  if (!copyBuffer.length) return;
+  navigator.clipboard?.writeText(CLIPBOARD_MARKER + JSON.stringify(copyBuffer)).then(() => toast("节点已复制，可在画板粘贴")).catch(() => toast("节点已复制，可通过右键菜单粘贴"));
+}
+async function pasteClipboard(point) {
+  try {
+    if (navigator.clipboard?.read) {
+      const clipboard = await navigator.clipboard.read();
+      const files = [];
+      for (const item of clipboard) {
+        const type = item.types.find(t => t.startsWith("image/"));
+        if (type) files.push(new File([await item.getType(type)], "粘贴图片-" + Date.now() + (type.includes("jpeg") ? ".jpg" : ".png"), { type }));
+      }
+      if (files.length) return uploadFiles(files, point);
+      for (const item of clipboard) if (item.types.includes("text/plain")) {
+        const list = parseNodeClipboard(await (await item.getType("text/plain")).text());
+        if (list) { copyBuffer = list; return duplicate(point); }
+      }
+    } else if (navigator.clipboard?.readText) {
+      const list = parseNodeClipboard(await navigator.clipboard.readText());
+      if (list) { copyBuffer = list; return duplicate(point); }
+    }
+    toast("剪贴板里没有图片或画板节点。复制图片后，直接 Ctrl / ⌘ + V。");
+  } catch {
+    if (copyBuffer.length) {
+      CanvasUI.menu([{ label: "粘贴上次复制的节点", action: () => duplicate(point) }], { point: lastPointer || { x: innerWidth / 2, y: innerHeight / 2 }, label: "粘贴节点" });
+    }
+    toast("浏览器未开放剪贴板读取，请直接按 Ctrl / ⌘ + V 粘贴图片。");
+  }
+}
+function copyImage(n) {
+  const v = version(n);
+  if (!v || !navigator.clipboard?.write || typeof ClipboardItem === "undefined") throw new Error("当前浏览器暂不支持复制图片，请下载原图");
+  const png = (async () => {
+    const response = await fetch(mediaURL(v));
+    if (!response.ok) throw new Error("图片读取失败");
+    const blob = await response.blob();
+    if (blob.type === "image/png") return blob;
+    const bitmap = await createImageBitmap(blob);
+    try {
+      const canvas = document.createElement("canvas"); canvas.width = bitmap.width; canvas.height = bitmap.height;
+      canvas.getContext("2d").drawImage(bitmap, 0, 0);
+      return await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error("图片转换失败")), "image/png"));
+    } finally { bitmap.close(); }
+  })();
+  return navigator.clipboard.write([new ClipboardItem({ "image/png": png })]).then(() => toast("图片已复制，Ctrl / ⌘ + V 即可放入画板"));
+}
+function nodeMenuEntries(n) {
+  const v = version(n), ids = selected.has(n.id) && selected.size > 1 ? [...selected] : [n.id];
+  return [
+    ...(n.type === "image" ? [{ label: "重新上传图片", glyph: "↑", action: () => chooseReplacement(n) }] : []),
+    ...(v?.kind === "image" ? [
+      { label: "修改图片", action: () => derive(n, "image") },
+      { label: "生成视频", action: () => derive(n, "video") },
+      { label: "复制图片", glyph: "▧", action: () => copyImage(n) },
+    ] : v?.kind === "video" ? [
+      { label: "提取尾帧", action: () => extractFrame(n, "last") },
+      { label: "尾帧续接", action: () => extractFrame(n, "last", 0, true) },
+    ] : []),
+    ...(v ? [
+      { label: "放大预览", glyph: "↗", action: () => previewVersions([v]) }, null,
+      { label: "收录到角色库", action: () => collectNode(n, "character") },
+      { label: "收录到场景库", action: () => collectNode(n, "scene") },
+    ] : []), null,
+    { label: "重命名与设置", action: () => editNode(n) },
+    { label: ids.length > 1 ? `复制 ${ids.length} 个节点` : "复制节点", shortcut: "⌘ / Ctrl C", action: () => copySelected(ids) },
+    { label: "创建副本", shortcut: "⌘ / Ctrl D", action: () => { copyBuffer = ids.map(node).map(clone); duplicate(); } },
+    ...(ids.length > 1 ? [{ label: "将所选节点分组", action: groupSelected }] : []),
+    { label: ids.length > 1 ? `移除 ${ids.length} 个节点` : "移除节点", shortcut: "⌫", danger: true, action: () => removeNodes(ids) },
+  ];
+}
+function canvasContextMenu(e) {
+  if (CanvasUI.isEditing(e.target) || !board()) return;
+  e.preventDefault();
+  const element = e.target.closest(".node"), n = element ? node(element.dataset.id) : null;
+  if (n && !selected.has(n.id)) selectNode(n.id);
+  const point = worldPoint(e.clientX, e.clientY);
+  CanvasUI.menu(n ? nodeMenuEntries(n) : [
+    { label: "创建图片节点", glyph: "▧", shortcut: "I", action: () => createNode("image", point) },
+    { label: "创建视频节点", glyph: "▷", shortcut: "V", action: () => createNode("video", point) },
+    { label: "创建文本节点", glyph: "T", shortcut: "T", action: () => createNode("text", point) }, null,
+    { label: "粘贴图片或节点", shortcut: "⌘ / Ctrl V", action: () => pasteClipboard(point) },
+    { label: "上传素材", glyph: "↑", action: () => { uploadPoint = point; $("#upload").click(); } },
+    { label: "打开素材库", action: () => openLibrary() }, null,
+    { label: "全选节点", shortcut: "⌘ / Ctrl A", disabled: !board().nodes.length, action: () => { selected = new Set(board().nodes.filter(n => !hiddenNode(n)).map(n => n.id)); syncSelection(); drawEdges(); } },
+    { label: "适应画板", disabled: !board().nodes.length, action: () => focusNodes(board().nodes.filter(n => !hiddenNode(n))) },
+    { label: "撤销", shortcut: "⌘ / Ctrl Z", disabled: !undoStack.length, action: () => history(undoStack, redoStack) },
+  ], { point: { x: e.clientX, y: e.clientY }, label: n ? "节点操作" : "画板操作" });
+}
+let lastPointer = null, uploadPoint = null;
+$("#viewport").addEventListener("pointermove", e => { lastPointer = { x: e.clientX, y: e.clientY }; }, { passive: true });
+$("#viewport").addEventListener("contextmenu", canvasContextMenu);
+document.addEventListener("copy", e => {
+  if (CanvasUI.isEditing(e.target) || e.target.closest("dialog") || !$("#story-panel").hidden || !selected.size) return;
+  copyBuffer = [...selected].map(node).filter(Boolean).map(clone);
+  if (!copyBuffer.length) return;
+  e.preventDefault();
+  e.clipboardData.setData("text/plain", CLIPBOARD_MARKER + JSON.stringify(copyBuffer));
+  toast("节点已复制");
+});
+document.addEventListener("paste", e => {
+  if (CanvasUI.isEditing(e.target) || e.target.closest("dialog") || !board() || !$("#story-panel").hidden) return;
+  const clipboard = e.clipboardData;
+  if (!clipboard) return;
+  let files = [...(clipboard.files || [])];
+  if (!files.length) files = [...(clipboard.items || [])].filter(item => item.kind === "file").map(item => item.getAsFile()).filter(Boolean);
+  if (files.some(file => /^(image|video)\//.test(file.type))) {
     e.preventDefault();
     uploadFiles(files).catch(report);
+    return;
   }
+  const list = parseNodeClipboard(clipboard.getData("text/plain"));
+  if (list) { e.preventDefault(); copyBuffer = list; duplicate(); }
 });
+$("#replace-image").onchange = e => {
+  const file = e.target.files[0], target = replacingImage;
+  replacingImage = null; e.target.value = "";
+  if (file && target) replaceImage(file, target).catch(report);
+};
+$("#asset-add").onclick = () => openAssetPicker(assetScope === "board" ? "" : assetScope).catch(report);
+$("#asset-browse").onclick = () => openAssetPicker().catch(report);
+$("#picker-upload").onclick = () => $("#asset-upload").click();
+$("#asset-upload").onchange = e => {
+  const category = pickerScope || (assetScope === "board" ? "" : assetScope);
+  uploadFiles(e.target.files, centerPoint(), { libraryOnly: true, category }).catch(report);
+  e.target.value = "";
+};
+$("#picker-search").oninput = () => { clearTimeout(renderPicker.timer); renderPicker.timer = setTimeout(() => renderPicker(true), 120); };
+$("#asset-sort").onclick = e => CanvasUI.menu([
+  { label: "最近添加", selected: assetSort === "recent", action: () => { assetSort = "recent"; $("#asset-sort").textContent = "最近添加 ↓"; renderAssets(true); } },
+  { label: "名称排序", selected: assetSort === "name", action: () => { assetSort = "name"; $("#asset-sort").textContent = "名称 A–Z"; renderAssets(true); } },
+], { anchor: e.currentTarget, label: "素材排序" });
+document.addEventListener("canvas-ui-error", e => report(e.detail));
+
 document
   .querySelectorAll("[data-create]")
   .forEach((b) => (b.onclick = () => createNode(b.dataset.create)));
@@ -2238,25 +2533,17 @@ $("#cancel-reference").onclick = endPick;
 $("#upload-button").onclick = $("#empty-upload").onclick = () =>
   $("#upload").click();
 $("#upload").onchange = (e) => {
-  uploadFiles(e.target.files).catch(report);
+  uploadFiles(e.target.files, uploadPoint || centerPoint()).catch(report);
+  uploadPoint = null;
   e.target.value = "";
 };
 $("#library-button").onclick = () => {
   if ($("#library-dialog").open) $("#library-dialog").close();
   else openLibrary().catch(report);
 };
-document.querySelectorAll("[data-asset-scope]").forEach(
-  (b) =>
-    (b.onclick = () => {
-      assetScope = b.dataset.assetScope;
-      document
-        .querySelectorAll("[data-asset-scope]")
-        .forEach((t) => t.setAttribute("aria-selected", String(t === b)));
-      renderAssets();
-    }),
-);
-$("#asset-search").oninput = renderAssets;
-$("#asset-kind").onchange = renderAssets;
+document.querySelectorAll("[data-asset-scope]").forEach(b => b.onclick = () => setAssetScope(b.dataset.assetScope));
+$("#asset-search").oninput = () => { clearTimeout(renderAssets.timer); renderAssets.timer = setTimeout(() => renderAssets(true), 120); };
+$("#asset-kind").onchange = () => renderAssets(true);
 $("#group-button").onclick = () => {
   try {
     groupSelected();
@@ -2443,7 +2730,7 @@ $("#reload-board").onclick = async () => {
       project().boards.find((b) => b.id === previousBoard)?.id ||
         project().boards[0].id,
     );
-    $("#save-state").textContent = "已保存";
+    $("#save-state").textContent = doc.storage === "cloud" ? "云端已保存" : "已保存（本地）";
     $("#save-notice").hidden = true;
     toast("已下载原草稿并载入最新画板，可导入草稿恢复修改。");
   } catch (e) {
@@ -2465,6 +2752,9 @@ $("#node-search").onkeydown = (e) => {
     } else toast("没有找到匹配节点");
   }
 };
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && dirty) { clearTimeout(journalTimer); journal(); }
+});
 window.addEventListener("beforeunload", (e) => {
   if (dirty) {
     journal();
@@ -2505,15 +2795,17 @@ async function boot() {
       project().boards.find((b) => b.id === last)?.id || project().boards[0].id;
     render();
     if (dirty) touch();
-    else $("#save-state").textContent = "已保存";
+    else $("#save-state").textContent = doc.storage === "cloud" ? "云端已保存" : "已保存（本地）";
     const [library, price] = await Promise.allSettled([
       api("/api/library"),
       api("/api/provider-pricing"),
     ]);
-    if (library.status === "fulfilled") assets = library.value.assets;
+    if (library.status === "fulfilled") { assets = library.value.assets; rebuildAssetIndex(); }
     if (price.status === "fulfilled") pricing = price.value;
     await poll();
-    setInterval(poll, 5000);
+    refreshStorage();
+    setInterval(() => { if (!document.hidden) poll(); }, 5000);
+    setInterval(() => { if (!document.hidden) refreshStorage(); }, 12000);
   } catch (e) {
     loadFailed = true;
     $("#save-state").textContent = "加载失败，请刷新重试";
@@ -2662,6 +2954,7 @@ $("#theme-toggle").onclick = () =>
 $("#help-toggle").onclick = () => $("#help-dialog").showModal();
 $("#toggle-map").onclick = () => {
   $("#minimap").hidden = !$("#minimap").hidden;
+  drawMini();
   $("#toggle-map").setAttribute("aria-pressed", String(!$("#minimap").hidden));
 };
 $("#toggle-edges").onclick = () => {
@@ -2684,4 +2977,27 @@ document.addEventListener("keydown", (e) => {
     document.querySelectorAll("details[open]").forEach((d) => (d.open = false));
 });
 
+CanvasUI.enhance();
 boot();
+
+let storageStatus = null;
+async function refreshStorage() {
+  try {
+    storageStatus = await api("/api/storage");
+    const s = storageStatus, el = $("#storage-state");
+    el.hidden = false;
+    el.textContent = !s.ready ? "云端未连接" : s.pending ? `素材同步中 · ${s.stored}` : s.errors ? "云端待重试" : "素材已同步";
+    el.dataset.state = !s.ready || s.errors ? "warning" : s.pending ? "syncing" : "saved";
+    el.title = `已同步 ${s.stored} 份素材${s.pending ? `，待同步 ${s.pending} 份` : ""}${s.missing ? `；${s.missing} 条历史记录缺少源文件` : ""}`;
+  } catch { $("#storage-state").textContent = "正在重连云端"; }
+}
+$("#storage-state").onclick = () => {
+  const s = storageStatus;
+  if (!s) return;
+  CanvasUI.menu([
+    { label: s.ready ? "素材保存在私有云空间" : "云端暂时未连接", description: "画板与素材分类自动保存，本机仅作缓存", disabled: true },
+    { label: `已同步 ${s.stored} 份 · 待同步 ${s.pending} 份`, disabled: true },
+    ...(s.missing ? [{ label: `${s.missing} 条历史记录缺少源文件`, description: "保留历史记录，未将缺失文件标记为已同步", disabled: true }] : []), null,
+    { label: "重试云端同步", disabled: !s.ready, action: async () => { await api("/api/storage/sync", { method: "POST" }); await refreshStorage(); toast("正在同步到云端"); } },
+  ], { anchor: $("#storage-state"), label: "云端存储", placement: "bottom-end" });
+};

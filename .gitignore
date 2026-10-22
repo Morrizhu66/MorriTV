@@ -35,3 +35,8 @@ cloud-images.tmp
 # Local canvas projects
 boards.json
 boards.tmp
+
+# Recoverable cloud workspace cache
+cloud-workspace.json
+cloud-workspace.tmp
+*.restore-part

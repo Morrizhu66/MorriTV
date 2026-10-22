@@ -1,4 +1,4 @@
-"""Temporary private TOS hosting for HFSY reference media."""
+"""Private TOS storage for original media and workspace documents."""
 
 from __future__ import annotations
 
@@ -166,3 +166,25 @@ def original_url(info: dict, read_value, *, tos_module=None) -> str:
     if not getattr(output, 'signed_url', ''):
         raise RuntimeError('TOS 未返回原图访问链接')
     return str(output.signed_url)
+
+
+def put_document(key: str, content: bytes, read_value, *, tos_module=None) -> dict:
+    config = _config(read_value)
+    client = _client(config, _tos_module(tos_module))
+    client.put_object(config['bucket'], key, content=content, content_type='application/json; charset=utf-8')
+    return {'tos_key': key, 'bucket': config['bucket']}
+
+
+def get_document(key: str, read_value, *, tos_module=None) -> bytes | None:
+    config = _config(read_value)
+    client = _client(config, _tos_module(tos_module))
+    try:
+        result = client.get_object(config['bucket'], key)
+        content = result.read(64 * 1024 * 1024 + 1)
+        if len(content) > 64 * 1024 * 1024:
+            raise ValueError('云端工作区文档超过 64 MiB')
+        return content
+    except Exception as exc:
+        if getattr(exc, 'status_code', None) == 404:
+            return None
+        raise

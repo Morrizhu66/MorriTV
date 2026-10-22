@@ -43,6 +43,39 @@ class MediaLibraryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "图片或视频"):
             self.library.import_stream("notes.txt", "text/plain", io.BytesIO(b"text"))
 
+    def test_character_and_scene_collections_survive_reload_without_moving_source(self):
+        asset = self.library.import_stream("hero.png", "image/png", io.BytesIO(b"original"))
+        self.library.update_metadata(asset["id"], {"category": "character", "included": True})
+        self.library.update_metadata(asset["id"], {"category": "scene", "included": True})
+        renamed = self.library.update_metadata(asset["id"], {"name": "  女主  定妆  "})
+        self.assertEqual(renamed["name"], "女主 定妆")
+        self.assertEqual(renamed["categories"], ["character", "scene"])
+        self.library.update_metadata(asset["id"], {"category": "character", "included": False})
+        restored = MediaLibrary(self.manifest, self.results).snapshot()["assets"][0]
+        self.assertEqual(restored["categories"], ["scene"])
+        self.assertEqual(restored["id"], asset["id"])
+        self.assertEqual(restored["url"], asset["url"])
+        self.assertEqual((self.results / asset["file_name"]).read_bytes(), b"original")
+
+    def test_metadata_rejects_identity_changes_and_invalid_categories_atomically(self):
+        asset = self.library.import_stream("hero.png", "image/png", io.BytesIO(b"original"))
+        before = self.library.snapshot()
+        for change in ({"url": "/other"}, {"name": ""}, {"name": "x" * 121},
+                       {"category": "other", "included": True}, {"category": "scene", "included": "false"},
+                       {"name": "changed", "category": "scene"}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.library.update_metadata(asset["id"], change)
+            self.assertEqual(self.library.snapshot(), before)
+
+    def test_failed_metadata_save_does_not_mutate_in_memory_asset(self):
+        from unittest.mock import patch
+        asset = self.library.import_stream("hero.png", "image/png", io.BytesIO(b"original"))
+        before = self.library.snapshot()
+        with patch.object(self.library, "_write", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.library.update_metadata(asset["id"], {"category": "character", "included": True})
+        self.assertEqual(self.library.snapshot(), before)
+
     def test_move_asset_validates_folder_and_persists_assignment(self):
         first = self.library.create_folder("待处理")
         second = self.library.create_folder("已选")

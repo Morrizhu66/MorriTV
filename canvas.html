@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Morri · 创作画板</title>
     <link rel="stylesheet" href="/canvas.css" />
+    <link rel="stylesheet" href="/canvas-ui.css" />
   </head>
   <body>
     <header class="top">
@@ -43,7 +44,7 @@
         ><button id="story-view" role="tab" aria-selected="false">镜头</button>
       </div>
       <div class="top-right">
-        <span id="save-state" role="status">正在打开…</span
+        <button id="storage-state" class="quiet-button storage-state" hidden aria-label="云端素材同步状态"></button><span id="save-state" role="status">正在打开…</span
         ><button id="task-toggle" class="quiet-button" title="任务中心">
           任务 <b id="task-count">0</b></button
         ><button id="export-shots" class="export-button">
@@ -238,46 +239,45 @@
         <dd>I / V / T</dd>
         <dt>多选</dt>
         <dd>Shift + 点选 / 拖动框选</dd>
-        <dt>复制 / 粘贴节点</dt>
+        <dt>复制节点 / 粘贴图片或节点</dt>
         <dd>⌘ / Ctrl + C / V</dd>
         <dt>撤销 / 重做</dt>
         <dd>⌘ / Ctrl + Z / Shift + Z</dd>
         <dt>预览结果</dt>
         <dd>双击图片 / 节点工具栏</dd>
+        <dt>画板操作菜单</dt>
+        <dd>右键空白处或节点</dd>
         <dt>引用素材</dt>
         <dd>@ / 拖线 / 拖入参考区</dd>
       </dl>
     </dialog>
-    <dialog id="library-dialog" aria-label="素材与节点">
-      <header>
-        <div>
-          <span class="tiny-label">YOUR ASSETS</span>
-          <h2>素材与节点</h2>
-        </div>
-        <button data-close aria-label="关闭">×</button>
+    <dialog id="library-dialog" aria-label="素材库">
+      <header class="library-header">
+        <div class="library-brand"><span data-icon="library"></span><h2>素材库</h2><span class="library-badge">ASSETS</span></div>
+        <button data-close aria-label="关闭素材库" class="library-close">×</button>
       </header>
       <div class="asset-tabs" role="tablist" aria-label="素材范围">
-        <button role="tab" data-asset-scope="board" aria-selected="true">
-          当前画板
-        </button>
-        <button role="tab" data-asset-scope="library" aria-selected="false">
-          素材库
-        </button>
+        <button role="tab" data-asset-scope="board" aria-selected="true"><span data-icon="layers"></span>当前画板</button>
+        <button role="tab" data-asset-scope="character" aria-selected="false"><span data-icon="person"></span>角色库</button>
+        <button role="tab" data-asset-scope="scene" aria-selected="false"><span data-icon="landscape"></span>场景库</button>
       </div>
+      <div class="library-intro"><div><h3 id="asset-heading">画板中的灵感</h3><p id="asset-description">所有节点，就在手边。</p></div><button id="asset-add" class="library-add" aria-label="添加素材">＋</button></div>
       <div class="library-controls">
-        <input
-          id="asset-search"
-          placeholder="搜索素材"
-          aria-label="搜索素材"
-        /><select id="asset-kind" aria-label="素材类型">
-          <option value="">全部类型</option>
-          <option value="image">图片</option>
-          <option value="video">视频</option>
-        </select>
+        <label class="library-search"><span data-icon="search"></span><input id="asset-search" placeholder="搜索名称或描述…" aria-label="搜索素材" /></label>
+        <select id="asset-kind" aria-label="素材类型"><option value="">全部</option><option value="image">图片</option><option value="video">视频</option><option value="text">文本</option></select>
       </div>
-      <div id="asset-list"></div>
-      <p id="library-note"></p>
+      <div class="library-list-heading"><span id="library-count"></span><button id="asset-sort" class="quiet-button">最近添加 ↓</button></div>
+      <div id="asset-list" tabindex="0" aria-label="素材列表"></div>
+      <footer class="library-footer"><span id="library-note"></span><button id="asset-browse" class="quiet-button">全部素材 ↗</button></footer>
+      <input id="asset-upload" hidden type="file" multiple accept="image/*,video/*" />
     </dialog>
+    <dialog id="asset-picker-dialog" aria-label="选择已有素材">
+      <header><div><span class="tiny-label">REUSE YOUR ASSETS</span><h2 id="picker-title">选择已有素材</h2></div><button data-close aria-label="关闭素材选择">×</button></header>
+      <div class="picker-toolbar"><label class="library-search"><span data-icon="search"></span><input id="picker-search" placeholder="搜索所有素材…" aria-label="搜索已有素材" /></label><button id="picker-upload" class="primary">上传新素材</button></div>
+      <div id="picker-list" tabindex="0" aria-label="已有素材列表"></div>
+      <footer><small id="picker-note"></small><span>点击加入，或拖入画板</span></footer>
+    </dialog>
+    <input hidden id="replace-image" type="file" accept="image/*" />
     <dialog id="task-dialog">
       <header>
         <h2>任务中心</h2>
@@ -320,6 +320,9 @@
         </footer>
       </form>
     </dialog>
+    <script src="/vendor/floating-ui/core.min.js"></script>
+    <script src="/vendor/floating-ui/dom.min.js"></script>
+    <script src="/canvas-ui.js"></script>
     <script src="/canvas.js"></script>
   </body>
 </html>

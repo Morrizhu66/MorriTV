@@ -748,7 +748,7 @@ function thumbnailUrl(url) { return url.startsWith('/media/') ? `${url}?thumbnai
 async function loadStorage() {
   try {
     const status = await libraryRequest('/api/storage');
-    document.querySelector('#storage-status').textContent = status.ready ? `云端原图 ${status.stored} · 待同步 ${status.pending}${status.sync?.running ? ` · 正在同步，已完成 ${status.sync.synced}` : status.sync?.failed ? ` · ${status.sync.failed} 张同步失败，原图仍在本地` : ''}` : '云存储未配置 · 原图保留在本地';
+    document.querySelector('#storage-status').textContent = status.ready ? `云端素材 ${status.stored} · 待同步 ${status.pending}${status.sync?.running ? ` · 正在同步，已完成 ${status.sync.synced}` : status.sync?.failed ? ` · ${status.sync.failed} 份同步失败，源文件仍在本地` : ''}` : '云存储未连接 · 素材尚未同步';
     document.querySelector('#sync-storage').disabled = !status.ready || !status.pending || status.sync?.running;
   } catch { document.querySelector('#storage-status').textContent = '云存储状态暂不可用'; }
 }
@@ -758,7 +758,7 @@ document.querySelector('#sync-storage').addEventListener('click', async event =>
     const result = await libraryRequest('/api/storage/sync', { method: 'POST' });
     notify('已开始后台同步原图，可以继续整理素材');
   } catch (error) { notify(error.message); }
-  finally { button.textContent = '同步已有原图'; await loadStorage(); }
+  finally { button.textContent = '重试云端同步'; await loadStorage(); }
 });
 loadStorage(); setInterval(loadStorage, 5000);
 

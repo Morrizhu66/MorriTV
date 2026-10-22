@@ -177,6 +177,43 @@ class MediaLibrary:
             asset = next((item for item in self._data["assets"] if item.get("task_id") == task_id), None)
             return dict(asset) if asset else None
 
+    def update_metadata(self, asset_id: str, changes: dict[str, Any]) -> dict[str, Any]:
+        """Organize an asset without changing its identity, path or existing references."""
+        if not isinstance(changes, dict) or not changes or set(changes) - {"name", "category", "included"}:
+            raise ValueError("仅支持修改素材名称与角色 / 场景分类")
+        updates = {}
+        if "name" in changes:
+            if not isinstance(changes["name"], str):
+                raise ValueError("素材名称无效")
+            name = " ".join(changes["name"].split()).strip()
+            if not name or len(name) > 120:
+                raise ValueError("素材名称须为 1–120 个字")
+            updates["name"] = name
+        category = changes.get("category")
+        if category is not None or "included" in changes:
+            if category not in {"character", "scene"} or not isinstance(changes.get("included"), bool):
+                raise ValueError("请选择角色库或场景库")
+        with self._lock:
+            asset = next((item for item in self._data["assets"] if item.get("id") == asset_id), None)
+            if not asset:
+                raise ValueError("素材不存在")
+            if category:
+                categories = set(asset.get("categories") or [])
+                if changes["included"]:
+                    categories.add(category)
+                else:
+                    categories.discard(category)
+                updates["categories"] = sorted(categories)
+            previous = dict(asset)
+            asset.update(updates, updated_at=round(time.time(), 3))
+            try:
+                self._write()
+            except Exception:
+                asset.clear()
+                asset.update(previous)
+                raise
+            return json.loads(json.dumps(asset))
+
     def trash_asset(self, asset_id: str, trash_root: Path) -> dict[str, Any]:
         """Move one asset into a recoverable trash folder and remove its manifest entry."""
         with self._lock:

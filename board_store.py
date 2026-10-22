@@ -13,6 +13,7 @@ class BoardStore:
     def __init__(self, path):
         self.path = Path(path)
         self.lock = threading.RLock()
+        self.remote_writer = None
 
     def load(self):
         with self.lock:
@@ -79,6 +80,10 @@ class BoardStore:
             if document.get("revision") != current["revision"]:
                 raise BoardConflict("画板已被另一个窗口修改。请先导出当前画板备份，再刷新读取最新版本。")
             saved = {"revision": current["revision"] + 1, "projects": projects}
+            # A successful response means the cloud has acknowledged this revision.
+            # On failure keep the previous local revision so the same edit can retry.
+            if self.remote_writer:
+                self.remote_writer(saved)
             self.path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.path.with_suffix(".tmp")
             temporary.write_text(json.dumps(saved, ensure_ascii=False), encoding="utf-8")

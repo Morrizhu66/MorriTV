@@ -181,6 +181,21 @@ class MediaLibraryServerTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("不能为空", payload["error"])
 
+    def test_asset_collection_metadata_endpoint_preserves_media_and_validates_input(self):
+        asset = server.MEDIA_LIBRARY.import_stream("hero.png", "image/png", __import__("io").BytesIO(b"original"))
+        path = "/api/library/assets/" + asset["id"] + "/metadata"
+        status, data = self.request_json(path, "POST", {"category": "character", "included": True})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["asset"]["categories"], ["character"])
+        self.assertEqual(data["asset"]["url"], asset["url"])
+        status, _ = self.request_json(path, "POST", {"url": "/private-file"})
+        self.assertEqual(status, 400)
+        status, data = self.request_json(path, "POST", {"category": "character", "included": False})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["asset"]["categories"], [])
+        with urlopen(self.base_url + asset["url"]) as response:
+            self.assertEqual(response.read(), b"original")
+
     def test_delete_collection_route_preserves_assets_in_default_results(self):
         _, created = self.request_json("/api/library/folders", "POST", {"name": "临时收藏夹"})
         folder_id = created["folder"]["id"]
@@ -239,6 +254,31 @@ class MediaLibraryServerTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, 416)
         self.assertEqual(raised.exception.headers["Content-Range"], "bytes */10")
+
+
+    def test_cloud_video_range_survives_missing_local_cache(self):
+        import io
+        from unittest.mock import patch
+        class Partial(io.BytesIO):
+            status = 206
+        record = {"tos_key": "video", "bucket": "private", "kind": "video", "mime": "video/mp4", "original_bytes": 10, "cache_original": True}
+        with patch.object(server, "cloud_media_info", return_value=record), patch.object(server.CLOUD_IMAGES, "url", return_value="https://storage.invalid/video"), patch.object(server, "urlopen", return_value=Partial(b"2345")) as upstream:
+            with urlopen(Request(self.base_url + "/media/results/absent.mp4", headers={"Range": "bytes=2-5"})) as response:
+                self.assertEqual(response.status, 206)
+                self.assertEqual(response.headers["Content-Range"], "bytes 2-5/10")
+                self.assertEqual(response.headers.get_content_type(), "video/mp4")
+                self.assertEqual(response.read(), b"2345")
+            self.assertEqual(upstream.call_args.args[0].get_header("Range"), "bytes=2-5")
+
+    def test_invalid_cloud_range_does_not_fetch_upstream(self):
+        from unittest.mock import patch
+        record = {"tos_key": "video", "bucket": "private", "kind": "video", "mime": "video/mp4", "original_bytes": 10, "cache_original": True}
+        with patch.object(server, "cloud_media_info", return_value=record), patch.object(server, "urlopen") as upstream:
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(Request(self.base_url + "/media/results/absent.mp4", headers={"Range": "bytes=20-30"}))
+            self.assertEqual(caught.exception.code, 416)
+            self.assertEqual(caught.exception.headers["Content-Range"], "bytes */10")
+            upstream.assert_not_called()
 
 
 if __name__ == "__main__":

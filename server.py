@@ -22,9 +22,10 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlparse
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 
 from cloud_images import CloudImages
+from cloud_workspace import CloudWorkspace
 import lingganya_client
 from board_export import build_export
 from board_store import BoardStore, BoardConflict
@@ -54,6 +55,7 @@ for folder in (UPLOADS_DIR, RESULTS_DIR, COLLECTIONS_DIR, TRASH_DIR, INSPIRATION
 BOARDS = BoardStore(APP_DIR / "boards.json")
 
 CLOUD_IMAGES = CloudImages(APP_DIR / "cloud-images.json")
+CLOUD_WORKSPACE = None
 CLOUD_ERRORS: dict[str, str] = {}
 CLOUD_SYNC = {"running": False, "synced": 0, "failed": 0}
 MEDIA_LIBRARY = MediaLibrary(LIBRARY_FILE, RESULTS_DIR, COLLECTIONS_DIR)
@@ -367,6 +369,8 @@ def persist_cloud_image(path: Path) -> bool:
 
 
 def cloud_status() -> dict[str, Any]:
+    if CLOUD_WORKSPACE:
+        return CLOUD_WORKSPACE.status()
     assets = [item for item in MEDIA_LIBRARY.snapshot()["assets"] if item.get("kind") == "image"]
     stored = 0
     for asset in assets:
@@ -378,6 +382,9 @@ def cloud_status() -> dict[str, Any]:
 
 
 def sync_cloud_images() -> None:
+    if CLOUD_WORKSPACE:
+        CLOUD_WORKSPACE.wake.set()
+        return
     try:
         assets = [item for item in MEDIA_LIBRARY.snapshot()["assets"] if item.get("kind") == "image"]
         for asset in assets:
@@ -394,6 +401,10 @@ def sync_cloud_images() -> None:
                 CLOUD_SYNC["failed"] += 1
     finally:
         CLOUD_SYNC["running"] = False
+
+
+def cloud_media_info(path):
+    return (CLOUD_WORKSPACE.info(path) if CLOUD_WORKSPACE else None) or CLOUD_IMAGES.info(path)
 
 
 def trash_entry(entry_id: str) -> Path:
@@ -963,7 +974,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
             except Exception:
                 return self.respond_json({"mini": None, "sunburst": None})
         if path == "/api/boards":
-            return self.respond_json(BOARDS.load())
+            return self.respond_json({**BOARDS.load(), "storage": "cloud" if BOARDS.remote_writer else "local"})
         if path == "/api/usage":
             return self.respond_json(daily_usage())
         if path == "/api/storage":
@@ -987,7 +998,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         if path in {"/cloud-images.json", "/cloud-images.tmp"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        if path not in {"/", "/index.html", "/app.js", "/style.css", "/canvas.html", "/canvas.js", "/canvas.css"}:
+        if path not in {"/", "/index.html", "/app.js", "/style.css", "/canvas.html", "/canvas.js", "/canvas.css", "/canvas-ui.js", "/canvas-ui.css", "/vendor/floating-ui/core.min.js", "/vendor/floating-ui/dom.min.js"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         return super().do_GET()
@@ -1034,23 +1045,43 @@ class StudioHandler(SimpleHTTPRequestHandler):
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        if not target.is_file():
+        cloud_info = cloud_media_info(target)
+        thumbnail = "thumbnail=1" in urlparse(self.path).query
+        local_exists = target.is_file()
+        if not local_exists and not cloud_info:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        cloud_info = CLOUD_IMAGES.info(target)
-        if cloud_info and "thumbnail=1" not in urlparse(self.path).query:
+        # Local video originals and image previews are disposable read caches.
+        from_cloud = cloud_info and (not local_exists or (not thumbnail and not cloud_info.get("cache_original")))
+        if from_cloud:
+            info = cloud_info.get("preview", cloud_info) if thumbnail else cloud_info
+            size = info["original_bytes"]
             try:
-                # Same-origin streaming keeps clipboard/download independent of bucket CORS.
-                with urlopen(CLOUD_IMAGES.url(cloud_info, private_env_value), timeout=120) as original:
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header("Content-Type", cloud_info["mime"])
-                    self.send_header("Content-Length", str(cloud_info["original_bytes"]))
+                byte_range = parse_byte_range(self.headers.get("Range", ""), size)
+            except (ValueError, TypeError):
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            headers = {"Range": f"bytes={byte_range[0]}-{byte_range[1]}"} if byte_range else {}
+            try:
+                request = Request(CLOUD_IMAGES.url(info, private_env_value), headers=headers)
+                with urlopen(request, timeout=120) as original:
+                    if byte_range and original.status != 206:
+                        raise ValueError("Cloud storage did not honor Range")
+                    self.send_response(HTTPStatus.PARTIAL_CONTENT if byte_range else HTTPStatus.OK)
+                    self.send_header("Content-Type", info["mime"])
+                    self.send_header("Content-Length", str(byte_range[1] - byte_range[0] + 1 if byte_range else size))
+                    self.send_header("Accept-Ranges", "bytes")
+                    if byte_range:
+                        self.send_header("Content-Range", f"bytes {byte_range[0]}-{byte_range[1]}/{size}")
                     self.end_headers()
                     shutil.copyfileobj(original, self.wfile)
             except (BrokenPipeError, ConnectionResetError):
                 pass
             except Exception:
-                self.send_error(HTTPStatus.BAD_GATEWAY, "Cloud original unavailable")
+                self.send_error(HTTPStatus.BAD_GATEWAY, "Cloud media unavailable")
             return
         size = target.stat().st_size
         try:
@@ -1065,7 +1096,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         start, end = byte_range or (0, max(0, size - 1))
         content_length = end - start + 1 if size else 0
         self.send_response(HTTPStatus.PARTIAL_CONTENT if byte_range else HTTPStatus.OK)
-        self.send_header("Content-Type", (cloud_info.get("thumbnail_mime", "image/png") if cloud_info else mimetypes.guess_type(target.name)[0] or "application/octet-stream"))
+        self.send_header("Content-Type", (cloud_info.get("thumbnail_mime", "image/webp") if cloud_info and not cloud_info.get("cache_original") else mimetypes.guess_type(target.name)[0] or "application/octet-stream"))
         self.send_header("Accept-Ranges", "bytes")
         if byte_range:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
@@ -1089,7 +1120,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         try:
             if path == "/api/boards/export":
                 content = build_export(self.read_json(max_bytes=8 * 1024 * 1024),
-                                       {"results": RESULTS_DIR, "collections": COLLECTIONS_DIR, "uploads": UPLOADS_DIR, "inspirations": INSPIRATIONS_DIR}, CLOUD_IMAGES, private_env_value)
+                                       {"results": RESULTS_DIR, "collections": COLLECTIONS_DIR, "uploads": UPLOADS_DIR, "inspirations": INSPIRATIONS_DIR}, CLOUD_WORKSPACE or CLOUD_IMAGES, private_env_value)
                 self.send_response(HTTPStatus.OK)
                 self.send_header("Content-Type", "application/zip")
                 self.send_header("Content-Disposition", 'attachment; filename="storyboard.zip"')
@@ -1098,7 +1129,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(content)
                 return
             if path == "/api/boards":
-                return self.respond_json(BOARDS.save(self.read_json(max_bytes=8 * 1024 * 1024)))
+                return self.respond_json({**BOARDS.save(self.read_json(max_bytes=8 * 1024 * 1024)), "storage": "cloud" if BOARDS.remote_writer else "local"})
             resume = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)/resume", path)
             if resume:
                 with LOCK:
@@ -1157,6 +1188,10 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 if asset["kind"] == "image":
                     persist_cloud_image(MEDIA_LIBRARY.workspace_result_dir(asset["folder_id"]) / asset["file_name"])
                 return self.respond_json({"ok": True, "asset": asset}, HTTPStatus.CREATED)
+            metadata_match = re.fullmatch(r"/api/library/assets/([A-Za-z0-9_-]+)/metadata", path)
+            if metadata_match:
+                asset = MEDIA_LIBRARY.update_metadata(metadata_match.group(1), self.read_json())
+                return self.respond_json({"ok": True, "asset": asset})
             move_match = re.fullmatch(r"/api/library/assets/([A-Za-z0-9_-]+)/move", path)
             if move_match:
                 asset = move_library_asset(move_match.group(1), str(self.read_json().get("folder_id") or ""))
@@ -1235,7 +1270,17 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     os.chdir(APP_DIR)
+    CLOUD_WORKSPACE = CloudWorkspace(APP_DIR, CLOUD_IMAGES, private_env_value)
+    if CLOUD_WORKSPACE.ready:
+        CLOUD_WORKSPACE.restore_documents()
+        MEDIA_LIBRARY = MediaLibrary(LIBRARY_FILE, RESULTS_DIR, COLLECTIONS_DIR)
+        INSPIRATION_LIBRARY = InspirationLibrary(INSPIRATION_FILE, INSPIRATIONS_DIR, RESULTS_DIR, UPLOADS_DIR, COLLECTIONS_DIR)
     load_task_history()
+    # Board writes never acknowledge a local-only save in the running application.
+    BOARDS.remote_writer = CLOUD_WORKSPACE.save_board
+    if CLOUD_WORKSPACE.ready:
+        CLOUD_WORKSPACE.save_board(BOARDS.load())
+        CLOUD_WORKSPACE.start(MEDIA_LIBRARY)
     print(f"Model Studio running at http://{HOST}:{PORT}")
     print("API keys are read from the gitignored .env file or process environment")
     ThreadingHTTPServer((HOST, PORT), StudioHandler).serve_forever()

@@ -26,17 +26,19 @@ def build_export(payload, roots, cloud_images, read_value):
         for index, item in enumerate(media):
             url = urlparse(str(item.get('url', '')))
             if url.scheme or url.netloc or not url.path.startswith('/media/'):
-                raise ValueError('只可导出已保存到本机素材库的结果')
+                raise ValueError('只可导出已保存到素材库的结果')
             parts = Path(unquote(url.path.removeprefix('/media/'))).parts
             if not parts or parts[0] not in roots:
                 raise ValueError('素材路径无效')
             root = roots[parts[0]].resolve()
             source = root.joinpath(*parts[1:]).resolve()
-            if not source.is_relative_to(root) or not source.is_file():
+            if not source.is_relative_to(root):
                 raise ValueError('素材已移动或删除，请重新选择采用版本')
             if source.suffix.lower() not in {'.png','.jpg','.jpeg','.webp','.gif','.mp4','.webm','.mov'}:
                 raise ValueError('不支持的素材格式')
             cloud = cloud_images.info(source)
+            if not source.is_file() and not cloud:
+                raise ValueError("素材已移动或删除，请重新选择采用版本")
             if cloud:
                 with urlopen(cloud_images.url(cloud, read_value), timeout=120) as response:
                     data = response.read(128 * 1024 * 1024 + 1)
