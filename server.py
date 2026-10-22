@@ -998,7 +998,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         if path in {"/cloud-images.json", "/cloud-images.tmp"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
-        if path not in {"/", "/index.html", "/app.js", "/style.css", "/canvas.html", "/canvas.js", "/canvas.css", "/canvas-ui.js", "/canvas-ui.css", "/vendor/floating-ui/core.min.js", "/vendor/floating-ui/dom.min.js"}:
+        if path not in {"/", "/index.html", "/app.js", "/style.css", "/canvas.html", "/canvas.js", "/canvas.css", "/canvas-ui.js", "/canvas-ui.css", "/vendor/floating-ui/core.min.js", "/vendor/floating-ui/dom.min.js", "/vendor/motion/motion.js"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         return super().do_GET()

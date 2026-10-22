@@ -3,6 +3,15 @@
 window.CanvasUI = (() => {
   const { computePosition, autoUpdate, offset, flip, shift, size } = FloatingUIDOM;
   const selects = new WeakMap();
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  function reveal(el, distance = 6) {
+    if (reducedMotion.matches || !window.Motion) return;
+    Motion.animate(el, { opacity: [0, 1], y: [distance, 0] }, { duration: .18, ease: [.22, 1, .36, 1] });
+  }
+  const dialogObserver = new MutationObserver(records => {
+    for (const { target } of records) if (target.open) reveal(target, target.id === "library-dialog" ? 10 : 6);
+  });
+  document.querySelectorAll("dialog").forEach(el => dialogObserver.observe(el, { attributes: true, attributeFilter: ["open"] }));
   let active = null, serial = 0;
   const create = (tag, cls, text) => {
     const el = document.createElement(tag);
@@ -47,7 +56,7 @@ window.CanvasUI = (() => {
       }).then(({ x, y }) => {
         if (active !== current) return;
         Object.assign(popup.style, { left: `${x}px`, top: `${y}px`, visibility: "visible" });
-        if (!positioned) { positioned = true; focus(Math.max(0, selectedIndex)); }
+        if (!positioned) { positioned = true; reveal(popup, 4); focus(Math.max(0, selectedIndex)); }
       });
     };
     current.cleanup = autoUpdate(reference, popup, update);
@@ -114,7 +123,7 @@ window.CanvasUI = (() => {
       trigger.setAttribute("aria-haspopup", "listbox");
       trigger.setAttribute("aria-expanded", "false");
       const label = create("span", "ui-select-value");
-      trigger.append(label, create("span", "ui-chevron", "⌄"));
+      trigger.append(label, create("span", "ui-chevron"));
       select.before(wrapper); wrapper.append(select, trigger);
       select.hidden = true;
       select.tabIndex = -1;
@@ -186,5 +195,5 @@ window.CanvasUI = (() => {
     changes.forEach(updateSelect);
   });
   observer.observe(document.body, { childList: true, subtree: true });
-  return { menu, close, enhance, isEditing, get isOpen() { return !!active; } };
+  return { menu, close, enhance, reveal, isEditing, get isOpen() { return !!active; } };
 })();

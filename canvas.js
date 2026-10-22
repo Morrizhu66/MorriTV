@@ -400,7 +400,7 @@ function centerPoint() {
   const r = $("#viewport").getBoundingClientRect();
   return worldPoint(r.left + r.width / 2 - 130, r.top + r.height / 2 - 120);
 }
-function createNode(type, position = centerPoint(), overrides = {}) {
+function createNode(type, position = centerPoint(), overrides = {}, defer = false) {
   position = { ...position };
   while (
     type !== "group" &&
@@ -412,7 +412,7 @@ function createNode(type, position = centerPoint(), overrides = {}) {
     )
   )
     position.x += 430;
-  checkpoint();
+  if (!defer) checkpoint();
   const profile = Object.keys(MODELS).find((k) => MODELS[k].kind === type);
   const m = MODELS[profile];
   const n = {
@@ -440,6 +440,7 @@ function createNode(type, position = centerPoint(), overrides = {}) {
     ...overrides,
   };
   board().nodes.push(n);
+  if (defer) return n;
   selected = new Set([n.id]);
   touch();
   render();
@@ -546,7 +547,12 @@ function renderNode(n) {
       make("small", "", n.prompt || "选中节点，开始描述你的画面"),
     );
     body.append(placeholder);
-    if (n.type === "image") body.append(button("上传图片", () => chooseReplacement(n), "empty-node-upload"));
+    if (n.type === "image") placeholder.append(iconButton("上传参考图片", "upload", () => chooseReplacement(n)));
+    if (current && ["queued", "running"].includes(current.status)) {
+      placeholder.classList.add("generating-placeholder");
+      placeholder.setAttribute("role", "status");
+      placeholder.setAttribute("aria-label", "正在生成，请稍候");
+    }
     if (current) {
       const state = make(
         "span",
@@ -1369,18 +1375,21 @@ async function submitNode(n) {
     form.set("node_id", n.id);
     form.set("submission_id", submissionId);
     form.set("reference_bindings", JSON.stringify(refs));
-    let prompt = snapshot.prompt;
+    const replayPrompt = n.replay?.displayPrompt === snapshot.prompt && JSON.stringify(n.replay?.refs) === JSON.stringify(snapshot.refs) ? n.replay.prompt : null;
+    let prompt = replayPrompt ?? snapshot.prompt;
     let imageIndex = 0,
       videoIndex = 0;
     for (const ref of refs) {
       if (ref.kind === "text") {
-        prompt += "\n" + ref.name + "：" + ref.text;
+        if (replayPrompt === null) prompt += "\n" + ref.name + "：" + ref.text;
         continue;
       }
       const kindLabel =
         ref.kind === "video" ? `视频${++videoIndex}` : `图片${++imageIndex}`;
-      prompt = prompt.split("@" + ref.name).join("@" + kindLabel);
-      prompt += `\n${kindLabel}：${ref.name}，用途：${ref.role}。`;
+      if (replayPrompt === null) {
+        prompt = prompt.split("@" + ref.name).join("@" + kindLabel);
+        prompt += `\n${kindLabel}：${ref.name}，用途：${ref.role}。`;
+      }
       const url = mediaURL(ref);
       if (!url?.startsWith("/media/"))
         throw new Error("素材缺少本地持久地址，请重新从素材库添加");
@@ -1491,8 +1500,104 @@ async function poll() {
     $("#task-count").title = e.message;
   }
 }
+const expandedTasks = new Set(), retryingTasks = new Set();
+let taskListSignature = "";
+function taskInputNode(t, source) {
+  const snapshot = source?.runs?.find(run => run.taskId === t.id)?.snapshot;
+  const bindings = clone(snapshot?.refs || t.reference_bindings || []);
+  let fileIndex = 0;
+  for (const ref of bindings) {
+    if (ref.kind === "text") continue;
+    const file = (t.reference_files || [])[fileIndex++];
+    if (file?.url) { ref.url = file.url; delete ref.assetId; delete ref.taskId; }
+  }
+  if (!bindings.length) for (const [i, file] of (t.reference_files || []).entries()) bindings.push({
+    id: uid(), versionId: t.id + ":input:" + i, name: file.name || "参考图" + (i + 1),
+    kind: file.mime?.startsWith("video/") ? "video" : "image", role: "参考", url: file.url,
+  });
+  const prompt = snapshot?.prompt ?? t.prompt ?? "";
+  return {
+    id: uid(), type: t.kind, name: (source?.name || "任务输入") + " · 复用",
+    x: 0, y: 0, prompt, profile: snapshot?.profile || t.profile,
+    ratio: snapshot?.ratio ?? t.ratio ?? "", resolution: snapshot?.resolution ?? t.resolution ?? "",
+    duration: String(snapshot?.duration ?? t.duration ?? 5), refs: bindings, versions: [], runs: [],
+    sourceTaskId: t.id, replay: { displayPrompt: prompt, prompt: t.prompt, refs: clone(bindings) },
+  };
+}
+async function copyTaskInput(t, source) {
+  copyBuffer = [taskInputNode(t, source)];
+  try {
+    await navigator.clipboard.writeText(CLIPBOARD_MARKER + JSON.stringify(copyBuffer));
+    toast("已复制提示词、参数和输入素材引用，可在画板粘贴");
+  } catch { toast("输入已复制，可在画板右键粘贴"); }
+}
+function reuseTaskInput(t, source) {
+  const input = taskInputNode(t, source);
+  const { x, y, ...settings } = input;
+  const n = createNode(t.kind, centerPoint(), settings);
+  touch(); render(); focusNodes([n]); $("#task-dialog").close();
+  return n;
+}
+async function retryTaskInput(t, source) {
+  if (retryingTasks.has(t.id)) return;
+  retryingTasks.add(t.id); renderTaskList();
+  try {
+    if (!MODELS[t.profile]) throw new Error("原模型已停用，请复制输入到节点后选择模型");
+    let n;
+    // An uncertain submission retains its idempotency key; retry it instead of charging a new copy.
+    for (const p of doc.projects) for (const b of p.boards) {
+      const existing = b.nodes.find(item => item.sourceTaskId === t.id && item.pendingSubmission);
+      if (existing) { projectId = p.id; if (boardId !== b.id) setBoard(b.id); n = existing; break; }
+    }
+    if (!n) n = reuseTaskInput(t, source);
+    else { selected = new Set([n.id]); render(); focusNodes([n]); $("#task-dialog").close(); }
+    await submitNode(n);
+  } finally { retryingTasks.delete(t.id); renderTaskList(); }
+}
+function taskDetails(t, source) {
+  const input = taskInputNode(t, source), panel = make("div", "task-detail");
+  panel.append(make("small", "detail-label", "本次输入快照"), make("pre", "task-full-prompt", input.prompt));
+  const params = make("div", "task-parameter-grid");
+  for (const [label, value] of [["模型", MODELS[input.profile]?.name || input.profile], ["画幅", input.ratio], ["分辨率", input.resolution], ...(t.kind === "video" ? [["时长", input.duration + " 秒"]] : []), ["节点", source?.name || t.node_id || "—"], ["任务 ID", t.id]]) {
+    const cell = make("div"); cell.append(make("small", "", label), make("span", "", value || "自动")); params.append(cell);
+  }
+  panel.append(params);
+  if (input.refs.length) {
+    panel.append(make("small", "detail-label", `输入素材 · ${input.refs.length}`));
+    const refs = make("div", "task-input-assets");
+    for (const ref of input.refs) {
+      const card = make("div", "task-input-card");
+      if (ref.kind !== "text" && mediaURL(ref)) {
+        const media = make(ref.kind === "video" ? "video" : "img");
+        media.src = mediaURL(ref); media.loading = "lazy"; media.alt = ref.name;
+        if (ref.kind === "video") { media.controls = true; media.preload = "none"; }
+        card.append(media);
+      }
+      card.append(make("span", "", ref.name || "参考素材"), make("small", "", ref.role || "参考")); refs.append(card);
+    }
+    panel.append(refs);
+  }
+  const outputURL = t.kind === "video" ? t.local_video_url : t.local_image_url;
+  if (t.status === "completed" && outputURL) {
+    const output = assets.find(a => a.task_id === t.id) || { name: source?.name || "生成结果", kind: t.kind, url: outputURL };
+    const results = make("div", "task-result-actions");
+    results.append(make("small", "detail-label", "生成结果"), button("预览结果", () => previewVersions([{ ...output, taskId: t.id }])), button("结果加入画板", () => {
+      const n = assetNode(output); focusNodes([n]); $("#task-dialog").close();
+    }));
+    panel.append(results);
+  }
+  const actions = make("div", "task-detail-actions");
+  actions.append(button("复制完整输入", () => copyTaskInput(t, source)), button("作为新节点", () => reuseTaskInput(t, source)), button("复制参数 JSON", async () => {
+    await navigator.clipboard.writeText(JSON.stringify({ taskId: t.id, boardId: t.board_id, nodeId: t.node_id, input }, null, 2)); toast("参数与素材地址已复制");
+  }));
+  panel.append(actions, make("small", "task-copy-note", "完整输入包含素材版本与地址；粘贴为新节点后可直接复用。重新生成会创建新任务并按模型计费。"));
+  return panel;
+}
 function renderTaskList() {
   const list = $("#task-list");
+  const signature = JSON.stringify([tasks, [...expandedTasks], [...retryingTasks], doc.projects.map(p => [p.name, p.boards.map(b => [b.name, b.nodes.map(n => [n.id, n.name])])])]);
+  if (signature === taskListSignature) return;
+  taskListSignature = signature;
   list.replaceChildren(
     ...tasks
       .slice()
@@ -1555,9 +1660,19 @@ function renderTaskList() {
               $("#task-dialog").close();
             }),
           );
-        if (t.status === "paused")
-          actions.append(button("继续查询", () => resumeTask(t)));
+        actions.append(button(expandedTasks.has(t.id) ? "收起详情" : "展开详情", () => {
+          expandedTasks.has(t.id) ? expandedTasks.delete(t.id) : expandedTasks.add(t.id); renderTaskList();
+        }));
+        actions.append(button("复制完整输入", () => copyTaskInput(t, source)));
+        if (t.status === "paused") actions.append(button("继续查询", () => resumeTask(t)));
+        if (t.status === "failed") {
+          const retry = button(retryingTasks.has(t.id) ? "正在提交…" : "重新生成", () => retryTaskInput(t, source));
+          retry.disabled = retryingTasks.has(t.id) || !MODELS[t.profile];
+          retry.title = MODELS[t.profile] ? "使用本次输入创建新的付费任务" : "原模型已停用，请复制输入后选择模型";
+          actions.append(retry);
+        }
         row.append(info, actions);
+        if (expandedTasks.has(t.id)) row.append(taskDetails(t, source));
         return row;
       }),
   );
@@ -1605,11 +1720,11 @@ async function uploadFiles(files, point = centerPoint(), options = {}) {
   if ($("#asset-picker-dialog").open) renderPicker();
   toast(`已导入 ${completed} 个素材${options.category ? "到" + scopeName(options.category) : options.libraryOnly ? "到素材库" : "到画板"}`);
 }
-function assetNode(asset, point = centerPoint()) {
+function assetNode(asset, point = centerPoint(), defer = false) {
   return createNode(asset.kind, point, {
     source: true, name: asset.name,
     versions: [{ id: uid(), assetId: asset.id, kind: asset.kind, url: asset.url, createdAt: Date.now() }],
-  });
+  }, defer);
 }
 let replacingImage = null;
 const replacementUploads = new Set();
@@ -1665,8 +1780,8 @@ async function updateAssetMetadata(asset, change, notify = true) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(change),
   });
   rememberAsset(updated);
-  if ($("#library-dialog").open) renderAssets();
-  if ($("#asset-picker-dialog").open) renderPicker();
+  if (!assetBatchBusy && $("#library-dialog").open) renderAssets();
+  if (!assetBatchBusy && $("#asset-picker-dialog").open) renderPicker();
   if (notify) toast(change.category ? `${change.included ? "已收录到" : "已移出"}${scopeName(change.category)}${change.included ? "，可跨画板复用" : "，源文件保留"}` : "素材名称已更新");
   return updated;
 }
@@ -1735,8 +1850,89 @@ class AssetGrid {
 }
 const libraryGrid = new AssetGrid($("#asset-list"), () => 2);
 const pickerGrid = new AssetGrid($("#picker-list"), () => $("#picker-list").clientWidth < 510 ? 2 : 3);
+const assetSelections = new Map();
+let assetBatchBusy = false;
+const recentAssetTrash = [];
+function assetSelection(picker) {
+  const key = picker ? "picker:" + pickerScope : "library:" + assetScope;
+  if (!assetSelections.has(key)) assetSelections.set(key, new Set());
+  return assetSelections.get(key);
+}
+function renderAssetSelection(picker, entries) {
+  const parent = $(picker ? "#asset-picker-dialog" : "#library-dialog");
+  let bar = parent.querySelector(".asset-selection-bar");
+  if (!bar) { bar = make("div", "asset-selection-bar"); parent.querySelector("footer").before(bar); }
+  const selection = assetSelection(picker);
+  const all = picker ? assets : libraryEntries();
+  for (const id of selection) if (!all.some(a => a.id === id)) selection.delete(id);
+  bar.replaceChildren();
+  const count = make("span", "selection-count", selection.size ? `已选 ${selection.size} 项` : "多选素材，批量整理");
+  bar.append(count, button(selection.size ? "取消" : "全选", () => {
+    if (selection.size) selection.clear(); else entries.forEach(a => selection.add(a.id));
+    picker ? renderPicker() : renderAssets();
+  }));
+  if (selection.size) {
+    const picked = () => all.filter(a => selection.has(a.id));
+    const action = (kind) => runAssetBatch(picked(), kind, picker);
+    if (picker || assetScope !== "board") bar.append(button(pickerScope && picker ? "批量收录" : "加入画板", () => action(picker && pickerScope ? pickerScope : "add"), "primary"));
+    bar.append(button("更多", e => CanvasUI.menu([
+      { label: "收录到角色库", action: () => action("character") },
+      { label: "收录到场景库", action: () => action("scene") },
+      ...(!picker && assetScope !== "board" ? [{ label: "从此库移出（保留源文件）", action: () => action("uncollect") }] : []),
+      null, { label: !picker && assetScope === "board" ? "移除画板节点（可撤销）" : "移到回收站", danger: true, action: () => action("trash") },
+    ], { anchor: e.currentTarget, label: "批量素材操作" })));
+  }
+  if (recentAssetTrash.length) bar.append(button("撤销删除", restoreRecentAssets));
+  bar.querySelectorAll("button").forEach(b => b.disabled = assetBatchBusy);
+}
+async function restoreRecentAssets() {
+  if (assetBatchBusy) return;
+  assetBatchBusy = true;
+  try {
+    while (recentAssetTrash.length) {
+      await api(`/api/trash/${encodeURIComponent(recentAssetTrash[recentAssetTrash.length - 1])}/restore`, { method: "POST" });
+      recentAssetTrash.pop();
+    }
+    await refreshLibrary(); toast("已恢复素材");
+  } finally { assetBatchBusy = false; renderAssets(); renderPicker(); }
+}
+async function runAssetBatch(entries, action, picker) {
+  if (assetBatchBusy || !entries.length) return;
+  assetBatchBusy = true;
+  const selection = assetSelection(picker), scope = assetScope;
+  const failures = []; let completed = 0;
+  renderAssets(); renderPicker();
+  try {
+    if (action === "trash" && entries.every(a => a.node)) {
+      removeNodes(entries.map(a => a.id)); selection.clear(); return;
+    }
+    const point = centerPoint(), added = [];
+    if (action === "add") checkpoint();
+    for (const a of entries) {
+      try {
+        if (action === "add") {
+          added.push(assetNode(a, { x: point.x + (completed % 4) * 410, y: point.y + Math.floor(completed / 4) * 460 }, true));
+        } else if (action === "trash") {
+          const result = await api(`/api/library/assets/${encodeURIComponent(a.id)}`, { method: "DELETE" });
+          if (result.trash_path) recentAssetTrash.push(result.trash_path.split(/[\\/]/).pop());
+          assets = assets.filter(item => item.id !== a.id); rebuildAssetIndex();
+        } else if (a.node) {
+          await collectNode(a.node, action);
+        } else {
+          await updateAssetMetadata(a, { category: action === "uncollect" ? scope : action, included: action !== "uncollect" }, false);
+        }
+        completed++; selection.delete(a.id);
+      } catch (error) { failures.push(`${a.name}: ${error.message}`); }
+    }
+    if (added.length) { selected = new Set(added.map(n => n.id)); touch(); render(); focusNodes(added); }
+    toast(failures.length ? `已完成 ${completed} 项，${failures.length} 项失败，失败项保留选中` : `已完成 ${completed} 项${action === "trash" ? "，可撤销删除" : ""}`);
+    if (failures.length) report(new Error(failures.slice(0, 3).join("；")));
+  } finally { assetBatchBusy = false; renderAssets(); renderPicker(); }
+}
 function assetCard(a, { picker = false } = {}) {
   const card = make("article", "asset-card");
+  const selection = assetSelection(picker);
+  card.classList.toggle("is-selected", selection.has(a.id));
   card.dataset.assetId = a.id;
   card.draggable = true;
   card.addEventListener("dragstart", e => {
@@ -1744,6 +1940,11 @@ function assetCard(a, { picker = false } = {}) {
     e.dataTransfer.effectAllowed = "copy";
   });
   const activate = async () => {
+    if (assetBatchBusy) return;
+    if (selection.size) {
+      selection.has(a.id) ? selection.delete(a.id) : selection.add(a.id);
+      picker ? renderPicker() : renderAssets(); return;
+    }
     if (picker && pickerScope) {
       await updateAssetMetadata(a, { category: pickerScope, included: true });
     } else if (a.node) {
@@ -1772,6 +1973,14 @@ function assetCard(a, { picker = false } = {}) {
   const categories = (a.categories || []).map(scopeName).join(" · ");
   caption.append(name, make("small", "asset-meta", a.node ? (a.node.source ? "导入素材" : a.url ? "已生成 · 可引用" : "创作节点") : categories || (a.source === "generated" ? "生成记录" : "本地导入")));
   main.append(preview, caption); card.append(main);
+  const checkbox = make("input", "asset-checkbox"); checkbox.type = "checkbox";
+  checkbox.checked = selection.has(a.id); checkbox.disabled = assetBatchBusy;
+  checkbox.setAttribute("aria-label", "选择 " + a.name);
+  checkbox.addEventListener("click", e => e.stopPropagation());
+  checkbox.addEventListener("change", () => {
+    checkbox.checked ? selection.add(a.id) : selection.delete(a.id);
+    picker ? renderPicker() : renderAssets();
+  }); card.append(checkbox);
   const more = button("···", e => {
     const entries = a.node ? nodeMenuEntries(a.node) : [
       { label: "添加到画板", glyph: "+", action: () => { $("#asset-picker-dialog").close(); assetNode(a); } },
@@ -1779,6 +1988,7 @@ function assetCard(a, { picker = false } = {}) {
       { label: "重命名", action: () => renameAsset(a) }, null,
       ...["character", "scene"].map(category => ({ label: `${a.categories?.includes(category) ? "移出" : "收录到"}${scopeName(category)}`, action: () => updateAssetMetadata(a, { category, included: !a.categories?.includes(category) }) })),
     ];
+    if (!a.node) entries.push(null, { label: "移到回收站", danger: true, action: () => runAssetBatch([a], "trash", picker) });
     CanvasUI.menu(entries, { anchor: e.currentTarget, label: "素材操作" });
   }, "asset-card-more");
   more.setAttribute("aria-label", a.name + " 素材操作"); card.append(more);
@@ -1806,6 +2016,7 @@ function renderAssets(reset = false) {
   $("#library-count").textContent = `${entries.length} 个${assetScope === "board" ? "节点" : "素材"}`;
   $("#library-note").textContent = assetScope === "board" ? "点击定位 · 拖入节点作为参考" : "跨画板复用 · 拖入画板或参考区";
   libraryGrid.set(entries, a => assetCard(a), emptyAssets(q), reset);
+  renderAssetSelection(false, entries);
 }
 async function openAssetPicker(scope = "") {
   pickerScope = scope;
@@ -1820,6 +2031,7 @@ function renderPicker(reset = false) {
   const q = $("#picker-search").value, entries = filterAssets(assets, q);
   $("#picker-note").textContent = `${entries.length} 个素材${pickerScope ? " · 已收录的素材会保留" : " · 原文件与历史版本保留"}`;
   pickerGrid.set(entries, a => assetCard(a, { picker: true }), emptyAssets(q, true), reset);
+  renderAssetSelection(true, entries);
 }
 
 async function extractFrame(n, mode, current = 0, continueVideo = false) {
@@ -2631,56 +2843,39 @@ $("#project-select").onchange = (e) => {
   projectId = e.target.value;
   setBoard(project().boards[0].id);
 };
-$("#project-menu").onclick = () =>
-  editDialog(
-    "项目设置",
-    [
-      ["name", "项目名称", "text", project().name],
-      ["style", "统一视觉风格（备注）", "textarea", project().style],
-      [
-        "action",
-        "项目操作",
-        "select",
-        "",
-        [
-          ["", "保存当前项目"],
-          ["复制", "复制为新项目"],
-          ["归档", "归档当前项目"],
-          ["恢复归档", "恢复已归档项目"],
-        ],
-      ],
-    ],
-    (v) => {
-      const p = project();
-      p.name = v.name || p.name;
-      p.style = v.style;
-      if (v.action === "复制") {
-        const next = clone(p);
-        next.id = uid();
-        next.name += " 副本";
-        next.boards.forEach((b) => {
-          b.id = uid();
-        });
-        doc.projects.push(next);
-        projectId = next.id;
-        setBoard(next.boards[0].id);
-      }
-      if (v.action === "归档") {
-        p.archived = true;
-        let next = doc.projects.find((x) => !x.archived);
-        if (!next) {
-          next = newProject("新项目");
-          doc.projects.push(next);
-        }
-        projectId = next.id;
-        setBoard(next.boards[0].id);
-      }
-      if (v.action === "恢复归档")
-        doc.projects.forEach((p) => (p.archived = false));
-      touch();
-      render();
-    },
-  );
+$("#project-menu").onclick = () => {
+  const original = project();
+  const saveFields = () => {
+    original.name = $("#edit-name").value.trim() || original.name;
+    original.style = $("#edit-style").value;
+  };
+  editDialog("项目设置", [
+    ["name", "项目名称", "text", original.name],
+    ["style", "视觉风格", "textarea", original.style],
+  ], () => { saveFields(); touch(); render(); });
+  const actions = make("section", "project-action-list");
+  actions.append(make("small", "", "项目管理"));
+  actions.append(button("创建项目副本", () => {
+    saveFields();
+    const next = clone(original); next.id = uid(); next.name += " 副本";
+    next.boards.forEach(b => { b.id = uid(); });
+    doc.projects.push(next); projectId = next.id; setBoard(next.boards[0].id);
+    touch(); render(); $("#edit-dialog").close(); toast("已创建项目副本");
+  }));
+  actions.append(button("归档此项目", () => {
+    saveFields(); original.archived = true;
+    let next = doc.projects.find(p => !p.archived);
+    if (!next) { next = newProject("新项目"); doc.projects.push(next); }
+    projectId = next.id; setBoard(next.boards[0].id);
+    touch(); render(); $("#edit-dialog").close(); toast("已归档，可在项目设置中恢复");
+  }, "danger"));
+  for (const archived of doc.projects.filter(p => p.archived)) {
+    actions.append(button("恢复 · " + archived.name, () => {
+      archived.archived = false; touch(); render(); $("#edit-dialog").close(); toast("项目已恢复");
+    }));
+  }
+  $("#edit-fields").append(actions);
+};
 $("#new-board").onclick = () =>
   editDialog(
     "新建画板",
