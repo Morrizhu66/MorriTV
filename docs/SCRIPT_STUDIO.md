@@ -47,6 +47,8 @@ PromptInput 的附件入口支持每轮最多 6 个文件、每个 20 MB。文�
 
 对话和已安装 Skills 存在 gitignored `script-data/`；重新构建不删除这些内容。
 
+从旧 `sdk-minimal` 升级时，已有原生会话库使用未压缩 JSONL，标准 SDK 默认 zstd 无法直接打开。启动时检测旧库，为该库保留原生 `compression: none` 设置，不重写或删除历史；全新会话库继续使用官方默认压缩。此兼容设置不影响原生工具、系统提示词或 `session-log-deepseek`。
+
 ## 前端来源
 
 直接使用 https://beui.dev/r/chat-app.json 及 Streaming Response、Prompt Input、Message、Message Scroller、Agent Activity、Range Slider 的实际 TSX 源码，位于 frontend/components。完整下载响应保留于 frontend/registry。适配包括中文按钮文案、窄侧栏尺寸、灰黑主题、真实数据源与 API Key / Skill 页面。MIT 许可见 frontend/BEUI-LICENSE.txt。
