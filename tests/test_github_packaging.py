@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 ARK_ENDPOINT_URL = (
     "https://cloud.bytedance.net/ark/region:ark+cn-beijing/endpoint/detail?"
     "Id=ep-20260422194853-4h52t&Tab=overview&arkAccountId=2110547014&"

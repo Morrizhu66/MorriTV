@@ -120,19 +120,34 @@ cd ..
 .venv/bin/python server.py
 ```
 
-打开 `http://127.0.0.1:4178/canvas.html`。前端构建产物已包含在仓库中。Harness 安装和运行说明见 [SCRIPT_STUDIO.md](SCRIPT_STUDIO.md)。
+打开 `http://127.0.0.1:4178/canvas.html`。前端构建产物已包含在仓库中。Harness 安装和运行说明见 [SCRIPT_STUDIO.md](docs/SCRIPT_STUDIO.md)。
 
 API Key、画板数据、对话、已安装 Skills、上传文件和生成结果保存在本地忽略目录，不应提交到 Git。服务面向本机使用，未经额外鉴权设计不应直接暴露公网。
 
 ## 技术与组件来源
 
-画板使用原生 DOM / SVG；脚本面板使用 React、Motion 和 BeUI 的实际组件源码。包括 PromptInput、StreamingResponse、AgentActivity、MessageScroller、RangeSlider；发送按钮适配 MagicUI Interactive Hover Button。来源与改动记录见 [UI_REFERENCES.md](UI_REFERENCES.md)，BeUI MIT 许可见 [frontend/BEUI-LICENSE.txt](frontend/BEUI-LICENSE.txt)。
+画板使用原生 DOM / SVG；脚本面板使用 React、Motion 和 BeUI 的实际组件源码。包括 PromptInput、StreamingResponse、AgentActivity、MessageScroller、RangeSlider；发送按钮适配 MagicUI Interactive Hover Button。来源与改动记录见 [UI_REFERENCES.md](docs/UI_REFERENCES.md)，BeUI MIT 许可见 [frontend/BEUI-LICENSE.txt](frontend/BEUI-LICENSE.txt)。
 
 验证命令：
 
 ```bash
-node --test test_canvas_ui.cjs
-python3 -m unittest test_script_studio.py test_script_workflows.py
+node --test tests/test_canvas_ui.cjs
+python3 -m unittest tests.test_script_studio tests.test_script_workflows
 ```
 
 截图来自本地运行界面，使用演示提示词；Markdown 截图为排版示例，不代表一次模型生成。媒体生成接口不属于开箱即用的公共服务。
+
+## 仓库导航
+
+| 位置 | 内容 |
+| --- | --- |
+| `canvas.*`、`canvas-ui.*`、`rich-prompt.js` | 画板界面与交互 |
+| `frontend/` | 脚本 Agent 的 React 源码与构建配置 |
+| `script-app.*` | 构建后的脚本界面，供服务直接加载 |
+| `server.py`、根目录 Python 模块 | 本地服务、模型适配、素材和画板存储 |
+| `assets/brand/` | MorriTV 品牌 PNG |
+| `docs/` | 接入说明、组件来源、产品截图 |
+| `tests/` | 回归测试，详见 [测试指南](tests/README.md) |
+| `vendor/` | 本地分发的第三方前端依赖及许可证 |
+
+`app.js`、`index.html`、`style.css` 保留为旧控制台兼容入口；新产品入口是 `/canvas.html`。用户数据与密钥不进入仓库。

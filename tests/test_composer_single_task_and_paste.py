@@ -6,7 +6,7 @@ from unittest.mock import patch
 import server
 
 
-APP_DIR = Path(__file__).resolve().parent
+APP_DIR = Path(__file__).resolve().parents[1]
 
 
 class ComposerSingleTaskAndPasteTests(unittest.TestCase):

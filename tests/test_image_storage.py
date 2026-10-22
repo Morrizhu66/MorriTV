@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 
-APP_DIR = Path(__file__).resolve().parent
+APP_DIR = Path(__file__).resolve().parents[1]
 SERVER_PATH = APP_DIR / "server.py"
 
 

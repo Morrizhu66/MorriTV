@@ -55,7 +55,7 @@ class SeparateMediaConcurrencyTests(unittest.TestCase):
         self.assertEqual(second_image["queue_position"], 2)
 
     def test_frontend_displays_the_selected_media_worker_limit(self):
-        js = (Path(__file__).parent / "app.js").read_text(encoding="utf-8")
+        js = (Path(__file__).resolve().parents[1] / "app.js").read_text(encoding="utf-8")
         self.assertIn("data.workers[state.kind]", js)
 
 

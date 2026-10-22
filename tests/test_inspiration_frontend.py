@@ -5,7 +5,7 @@ from pathlib import Path
 class InspirationFrontendTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        root = Path(__file__).resolve().parent
+        root = Path(__file__).resolve().parents[1]
         cls.html = (root / "index.html").read_text(encoding="utf-8")
         cls.js = (root / "app.js").read_text(encoding="utf-8")
         cls.css = (root / "style.css").read_text(encoding="utf-8")

@@ -29,7 +29,7 @@
 
 前端行为测试：`node --test test_canvas_ui.cjs`，13/13 通过。画板服务测试：`PYTHONPATH=.deps python3 -m unittest test_canvas -v`，9/9 通过。后者使用模拟供应商，不产生真实生成费用。JavaScript 语法检查与 `git diff --check` 均通过。
 
-界面截图：[深色画板](outputs/ui-review-20261022/canvas-dark.jpg)。
+界面截图：[深色画板](images/morritv-canvas.png)。
 
 ## 2026-10-23 宽面板与模型更新
 
