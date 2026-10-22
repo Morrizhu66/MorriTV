@@ -281,5 +281,39 @@ class MediaLibraryServerTests(unittest.TestCase):
             upstream.assert_not_called()
 
 
+    def test_cloud_only_asset_moves_deletes_and_restores_through_http(self):
+        import io
+        from unittest.mock import patch
+        from cloud_workspace import CloudWorkspace
+        from cloud_images import CloudImages
+        content = b'cloud-video-original'
+        asset = server.MEDIA_LIBRARY.import_stream('clip.mp4', 'video/mp4', io.BytesIO(content))
+        source = server.RESULTS_DIR / asset['file_name']
+        cloud = CloudWorkspace(self.root, CloudImages(self.root / 'cloud-images.json'), lambda _: '')
+        record = {'urls': [asset['url']], 'kind': 'video', 'mime': 'video/mp4',
+                  'bucket': 'private', 'tos_key': 'original', 'original_bytes': len(content), 'cache_original': True}
+        cloud.data['media'][asset['id']] = record
+        cloud.by_path[asset['url']] = record
+        source.unlink()
+        server.MEDIA_LIBRARY.restore_cache = cloud.restore_cache
+        folder = server.MEDIA_LIBRARY.create_folder('云端素材')
+        with patch.object(server, 'CLOUD_WORKSPACE', cloud), patch.object(cloud, 'url', return_value='https://example.invalid/media'), patch('cloud_workspace.urlopen', side_effect=lambda *a, **k: io.BytesIO(content)):
+            status, result = self.request_json('/api/library/assets/' + asset['id'] + '/move', method='POST', payload={'folder_id': folder['id']})
+            self.assertEqual(status, 200, result)
+            moved = result['asset']
+            cloud.persist_asset(moved)
+            (server.COLLECTIONS_DIR / folder['id'] / 'results' / moved['file_name']).unlink()
+            status, result = self.request_json('/api/library/assets/' + asset['id'], method='DELETE')
+            self.assertEqual(status, 200, result)
+            status, trash = self.request_json('/api/trash')
+            entry = trash['items'][0]
+            with urlopen(self.base_url + entry['url']) as response:
+                self.assertEqual(response.read(), content)
+            status, result = self.request_json('/api/trash/' + entry['id'] + '/restore', method='POST', payload={})
+            self.assertEqual(status, 200, result)
+            with urlopen(self.base_url + moved['url']) as response:
+                self.assertEqual(response.read(), content)
+
+
 if __name__ == "__main__":
     unittest.main()

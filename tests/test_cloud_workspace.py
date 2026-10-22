@@ -116,3 +116,54 @@ class CloudWorkspaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.persist_asset({'id': 'bad', 'kind': 'video', 'url': '/media/../../etc/passwd'})
         self.assertIsNone(self.store.info('/etc/passwd'))
+
+    def test_restored_cloud_media_can_move_and_enter_recoverable_trash(self):
+        from media_library import MediaLibrary
+        for kind in ('image', 'video'):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as fresh:
+                root = Path(fresh)
+                suffix = '.png' if kind == 'image' else '.mp4'
+                asset = {'id': kind, 'kind': kind, 'name': kind + suffix,
+                         'file_name': kind + suffix, 'folder_id': '',
+                         'url': '/media/results/' + kind + suffix}
+                content = b'cloud-preview' if kind == 'image' else b'cloud-video'
+                record = {'urls': [asset['url']], 'kind': kind, 'bucket': 'private',
+                          'tos_key': 'original', 'original_bytes': len(content)}
+                if kind == 'image':
+                    record['preview'] = {'bucket': 'private', 'tos_key': 'preview', 'original_bytes': len(content)}
+                self.objects[self.store.prefix + 'cloud-index.json'] = self.store.encode({'media': {kind: record}})
+                self.objects[self.store.prefix + 'media-library.json'] = self.store.encode({'folders': [], 'assets': [asset]})
+                cloud = CloudWorkspace(root, CloudImages(root / 'cloud-images.json'), self.read_value)
+                cloud.restore_documents()
+                library = MediaLibrary(root / 'media-library.json', root / 'results', restore_cache=cloud.restore_cache)
+                folder = library.create_folder('目标')
+                with patch.object(cloud, 'url', return_value='https://example.invalid/media') as signed, patch('cloud_workspace.urlopen', side_effect=lambda *a, **k: io.BytesIO(content)):
+                    moved = library.move_asset(kind, folder['id'])
+                    self.assertEqual(signed.call_args.args[0]['tos_key'], 'preview' if kind == 'image' else 'original')
+                    source = library.workspace_result_dir(folder['id']) / moved['file_name']
+                    self.assertEqual(source.read_bytes(), content)
+                    cloud.persist_asset(moved)
+                    source.unlink()  # Losing the cache again must not prevent deletion.
+                    trashed = library.trash_asset(kind, root / 'trash' / kind)
+                    trash_file = Path(trashed['trash_file'])
+                    self.assertEqual(trash_file.read_bytes(), content)
+                    self.assertEqual(library.snapshot()['assets'], [])
+                    restored = library.restore_asset(trashed['asset'], trash_file)
+                    self.assertEqual((library.workspace_result_dir(restored['folder_id']) / restored['file_name']).read_bytes(), content)
+
+    def test_incomplete_cloud_download_preserves_manifest_and_cleans_partial_file(self):
+        from media_library import MediaLibrary
+        path, asset = self.video()
+        self.store.persist_asset(asset)
+        path.unlink()
+        manifest = self.root / 'media-library.json'
+        asset.update(file_name='v.mp4', folder_id='')
+        manifest.write_bytes(self.store.encode({'folders': [], 'assets': [asset]}))
+        library = MediaLibrary(manifest, self.root / 'results', restore_cache=self.store.restore_cache)
+        before = manifest.read_bytes()
+        with patch.object(self.store, 'url', return_value='https://example.invalid/media'), patch('cloud_workspace.urlopen', return_value=io.BytesIO(b'short')):
+            with self.assertRaisesRegex(ValueError, '不完整'):
+                library.trash_asset('v', self.root / 'trash/v')
+        self.assertEqual(manifest.read_bytes(), before)
+        self.assertFalse(path.exists())
+        self.assertEqual(list(path.parent.glob('*.restore-part')), [])

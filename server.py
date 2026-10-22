@@ -59,7 +59,8 @@ CLOUD_IMAGES = CloudImages(APP_DIR / "cloud-images.json")
 CLOUD_WORKSPACE = None
 CLOUD_ERRORS: dict[str, str] = {}
 CLOUD_SYNC = {"running": False, "synced": 0, "failed": 0}
-MEDIA_LIBRARY = MediaLibrary(LIBRARY_FILE, RESULTS_DIR, COLLECTIONS_DIR)
+MEDIA_LIBRARY = MediaLibrary(LIBRARY_FILE, RESULTS_DIR, COLLECTIONS_DIR,
+                             restore_cache=lambda path: CLOUD_WORKSPACE.restore_cache(path) if CLOUD_WORKSPACE else None)
 INSPIRATION_LIBRARY = InspirationLibrary(INSPIRATION_FILE, INSPIRATIONS_DIR, RESULTS_DIR, UPLOADS_DIR, COLLECTIONS_DIR)
 TASKS: dict[str, dict[str, Any]] = {}
 LOCK = threading.RLock()
@@ -1321,7 +1322,8 @@ if __name__ == "__main__":
     CLOUD_WORKSPACE = CloudWorkspace(APP_DIR, CLOUD_IMAGES, private_env_value)
     if CLOUD_WORKSPACE.ready:
         CLOUD_WORKSPACE.restore_documents()
-        MEDIA_LIBRARY = MediaLibrary(LIBRARY_FILE, RESULTS_DIR, COLLECTIONS_DIR)
+        MEDIA_LIBRARY = MediaLibrary(LIBRARY_FILE, RESULTS_DIR, COLLECTIONS_DIR,
+                                     restore_cache=CLOUD_WORKSPACE.restore_cache)
         INSPIRATION_LIBRARY = InspirationLibrary(INSPIRATION_FILE, INSPIRATIONS_DIR, RESULTS_DIR, UPLOADS_DIR, COLLECTIONS_DIR)
     load_task_history()
     # Board writes never acknowledge a local-only save in the running application.

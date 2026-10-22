@@ -18,12 +18,13 @@ ALLOWED_KINDS = {"image", "video"}
 class MediaLibrary:
     """Persist media assets and map every collection to a real workspace."""
 
-    def __init__(self, manifest_path: Path, results_dir: Path, collections_dir: Optional[Path] = None):
+    def __init__(self, manifest_path: Path, results_dir: Path, collections_dir: Optional[Path] = None, *, restore_cache=None):
         self.manifest_path = Path(manifest_path)
         self.results_dir = Path(results_dir)
         self.collections_dir = Path(collections_dir or self.results_dir.parent / "collections")
         self._lock = threading.RLock()
         self._data = self._load()
+        self.restore_cache = restore_cache
 
     def _load(self) -> dict[str, Any]:
         if not self.manifest_path.exists():
@@ -160,6 +161,8 @@ class MediaLibrary:
             if previous_folder == folder_id:
                 return dict(asset)
             source = self.workspace_result_dir(previous_folder) / str(asset.get("file_name") or "")
+            if not source.is_file() and self.restore_cache:
+                self.restore_cache(source)
             if not source.is_file():
                 raise ValueError("素材文件不存在，无法移动")
             destination_dir = self.workspace_result_dir(folder_id)
@@ -221,6 +224,8 @@ class MediaLibrary:
             if not asset:
                 raise ValueError("素材不存在")
             source = self.workspace_result_dir(str(asset.get("folder_id") or "")) / str(asset.get("file_name") or "")
+            if not source.is_file() and self.restore_cache:
+                self.restore_cache(source)
             if not source.is_file():
                 raise ValueError("素材文件不存在，已停止删除以避免数据丢失")
             destination = Path(trash_root) / "results"

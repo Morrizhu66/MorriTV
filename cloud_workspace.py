@@ -6,9 +6,12 @@ import mimetypes
 import re
 import threading
 import time
+import tempfile
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+from urllib.request import urlopen
 import tos_uploader
 
 
@@ -119,6 +122,31 @@ class CloudWorkspace:
 
     def url(self, info, read_value, **kwargs):
         return tos_uploader.original_url(info, read_value, **kwargs)
+
+    def restore_cache(self, path):
+        """Restore disposable media before a local move or recoverable deletion."""
+        path = Path(path).resolve()
+        if not path.is_relative_to(self.root.resolve()):
+            raise ValueError('素材路径无效')
+        if path.is_file():
+            return
+        record = self.info(path)
+        if not record:
+            return
+        info = record.get('preview', record)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=path.parent, suffix='.restore-part', delete=False) as output:
+                temporary = Path(output.name)
+                with urlopen(self.url(info, self.read_value), timeout=120) as response:
+                    shutil.copyfileobj(response, output)
+            if temporary.stat().st_size != info['original_bytes']:
+                raise ValueError('云端素材下载不完整，请重试')
+            temporary.replace(path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
     def persist_asset(self, asset):
         asset_id = asset['id']

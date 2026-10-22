@@ -1661,6 +1661,24 @@ async function submitNode(n) {
     renderTaskList(); if (!$("#task-dialog").open) $("#task-dialog").showModal();
   } finally { pending.delete(n.id); render(); }
 }
+function providerReferencePrompt(prompt, refs) {
+  let images = 0, videos = 0;
+  const media = refs.filter(r => r.kind !== "text").map(ref => ({
+    ref, label: ref.kind === "video" ? `视频${++videos}` : `图片${++images}`,
+  }));
+  const choices = [...media].sort((a, b) => b.ref.name.length - a.ref.name.length);
+  // Scan the original text once: generated labels must never be remapped.
+  let result = "";
+  for (let i = 0; i < prompt.length;) {
+    const match = choices.find(({ref}) => prompt.startsWith("@" + ref.name, i) &&
+      (!/^(图片|视频)\d+$/.test(ref.name) || !/\d/.test(prompt[i + ref.name.length + 1] || "")));
+    if (match) { result += "@" + match.label; i += match.ref.name.length + 1; }
+    else result += prompt[i++];
+  }
+  for (const ref of refs.filter(r => r.kind === "text")) result += "\n" + ref.name + "：" + ref.text;
+  for (const {ref, label} of media) result += `\n${label}：${ref.name}，用途：${ref.role}。`;
+  return result;
+}
 async function submitNodeRequest(n) {
   if (resolvePendingReferences(board().nodes)) touch();
   const bad = compatibility(n);
@@ -1703,20 +1721,14 @@ async function submitNodeRequest(n) {
     form.set("submission_id", submissionId);
     form.set("reference_bindings", JSON.stringify(refs));
     const replayPrompt = n.replay?.displayPrompt === snapshot.prompt && JSON.stringify(n.replay?.refs) === JSON.stringify(snapshot.refs) ? n.replay.prompt : null;
-    let prompt = replayPrompt ?? snapshot.prompt;
+    const prompt = replayPrompt ?? providerReferencePrompt(snapshot.prompt, refs);
     let imageIndex = 0,
       videoIndex = 0;
     for (const ref of refs) {
       if (ref.kind === "text") {
-        if (replayPrompt === null) prompt += "\n" + ref.name + "：" + ref.text;
         continue;
       }
-      const kindLabel =
-        ref.kind === "video" ? `视频${++videoIndex}` : `图片${++imageIndex}`;
-      if (replayPrompt === null) {
-        prompt = prompt.split("@" + ref.name).join("@" + kindLabel);
-        prompt += `\n${kindLabel}：${ref.name}，用途：${ref.role}。`;
-      }
+      if (ref.kind === "video") videoIndex++; else imageIndex++;
       const url = mediaURL(ref);
       if (!url?.startsWith("/media/"))
         throw new Error("素材缺少本地持久地址，请重新从素材库添加");
@@ -1778,7 +1790,11 @@ async function poll() {
             n.pendingSubmission = "";
             mutated = true;
           }
-          for (const t of (tasksByNode.get(`${b.id}:${n.id}`) || []).filter(t => t.status === "completed")) {
+          const completed = (tasksByNode.get(`${b.id}:${n.id}`) || [])
+            .filter(t => t.status === "completed")
+            .slice().sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id));
+          const newest = completed.at(-1);
+          for (const t of completed) {
             if (n.versions?.some((v) => v.taskId === t.id)) continue;
             const url =
               t.kind === "image" ? t.local_image_url : t.local_video_url;
@@ -1805,7 +1821,9 @@ async function poll() {
             };
             n.versions ??= [];
             n.versions.push(v);
-            n.currentVersion = v.id;
+            // A late result from an older request must not replace a newer result
+            // or a version the user has already selected.
+            if (t.id === newest.id) n.currentVersion = v.id;
             mutated = true;
           }
         }

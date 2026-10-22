@@ -197,3 +197,33 @@ test('image variables distinguish duplicate files and retain numbers after delet
  assert.equal(c.imageMentionCandidates({id:'target'})[1].name,'图片3');
  assert.equal(c.removeImageMention('@图片1 和 @图片10','图片1'),' 和 @图片10');
 });
+
+test('provider submission maps reordered mentions once and respects numeric boundaries', async () => {
+  let form;
+  const n={id:'n',type:'image',profile:'test',prompt:'@图片2 穿着 @图片1 的衣服，保留 @图片10',refs:[
+    {kind:'image',name:'图片2',url:'/media/a.png',role:'人物'},
+    {kind:'image',name:'图片1',url:'/media/b.png',role:'衣服'},
+    {kind:'text',name:'故事',text:'@图片1 不应被替换'}]};
+  const c=vm.createContext({resolvePendingReferences:()=>false,board:()=>({nodes:[n]}),compatibility:()=>'',pending:new Set(),clone:structuredClone,uid:()=> 'submission',boardId:'b',touch(){},saving:false,save:async()=>{},dirty:false,render(){},FormData,
+    fetch:async()=>({ok:true,blob:async()=>new Blob(['x'],{type:'image/png'})}),mediaURL:r=>r.url,
+    api:async(u,o)=>{form=o.body;return {tasks:[{id:'t'}]};},tasks:[],rebuildTaskIndex(){},toast(){},poll:async()=>{}});
+  vm.runInContext(section('function providerReferencePrompt(', 'async function resumeTask('),c);
+  await c.submitNodeRequest(n);
+  assert.equal(form.get('prompts'),'@图片1 穿着 @图片2 的衣服，保留 @图片10\n故事：@图片1 不应被替换\n图片1：图片2，用途：人物。\n图片2：图片1，用途：衣服。');
+  assert.equal(form.getAll('references').length,2);
+  n.replay={displayPrompt:n.prompt,refs:structuredClone(n.refs),prompt:'精确重放 @图片2'};
+  await c.submitNodeRequest(n);
+  assert.equal(form.get('prompts'),'精确重放 @图片2');
+});
+
+test('poll recovers results oldest first and does not replace a selection with a late older run', async () => {
+  const n={id:'n',versions:[]};
+  const task=(id,created)=>({id,board_id:'b',node_id:'n',created_at:created,finished_at:created+10,status:'completed',kind:'image',local_image_url:'/media/'+id+'.png'});
+  const tasks=[task('new',2),task('old',1)];
+  const c=vm.createContext({api:async()=>({tasks}),doc:{projects:[{boards:[{id:'b',nodes:[n]}]}]},tasksByNode:new Map([['b:n',tasks]]),rebuildTaskIndex(){},clone:structuredClone,resolvePendingReferences:()=>false,touch(){},$:()=>({}),document:{activeElement:{closest:()=>true}}});
+  vm.runInContext(section('async function poll()', 'const expandedTasks'),c);
+  await c.poll();
+  assert.deepEqual(Array.from(n.versions,v=>v.id),['old','new']);assert.equal(n.currentVersion,'new');
+  n.currentVersion='old';await c.poll();assert.equal(n.currentVersion,'old');
+  tasks.push(task('late',0));await c.poll();assert.equal(n.currentVersion,'old');
+});
