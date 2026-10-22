@@ -31,3 +31,7 @@ venv/
 cloud-images.json
 cloud-images.tmp
 *.cloud-part
+
+# Local canvas projects
+boards.json
+boards.tmp

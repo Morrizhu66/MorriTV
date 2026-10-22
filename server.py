@@ -25,7 +25,9 @@ from urllib.parse import quote, unquote, urlparse
 from urllib.request import urlopen
 
 from cloud_images import CloudImages
-import hfsy_client
+import lingganya_client
+from board_export import build_export
+from board_store import BoardStore, BoardConflict
 from inspiration_library import InspirationLibrary
 from media_library import MediaLibrary
 import tos_uploader
@@ -48,6 +50,8 @@ VIDEO_MAX_WORKERS = 4
 
 for folder in (UPLOADS_DIR, RESULTS_DIR, COLLECTIONS_DIR, TRASH_DIR, INSPIRATIONS_DIR):
     folder.mkdir(parents=True, exist_ok=True)
+
+BOARDS = BoardStore(APP_DIR / "boards.json")
 
 CLOUD_IMAGES = CloudImages(APP_DIR / "cloud-images.json")
 CLOUD_ERRORS: dict[str, str] = {}
@@ -108,7 +112,7 @@ def health_flags() -> dict[str, Any]:
         "ok": True,
         "image_ready": "ARK_API_KEY" in keys,
         "video_ready": "SEEDANCE_ARK_API_KEY" in keys,
-        "hfsy_ready": "HFSY_API_KEY" in keys,
+        "lingganya_ready": bool(private_env_value("LINGGANYA_API_KEY")),
         "tos_ready": tos_status["ready"],
         "workers": {"image": IMAGE_MAX_WORKERS, "video": VIDEO_MAX_WORKERS},
     }
@@ -152,6 +156,7 @@ PERSISTED_TASK_FIELDS = (
     "id", "kind", "provider", "profile", "prompt", "status", "created_at", "started_at",
     "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
     "local_image_url", "local_video_url", "error", "queue_position", "folder_id", "history_version",
+    "board_id", "node_id", "reference_bindings", "provider_task_id", "submission_id",
 )
 
 
@@ -181,7 +186,7 @@ def restore_history_task(snapshot: dict[str, Any]) -> dict[str, Any] | None:
     task = {
         "id": task_id,
         "kind": kind,
-        "provider": str(snapshot.get("provider") or ("hfsy" if hfsy_client.is_hfsy_profile(str(snapshot.get("profile") or "")) else "ark")),
+        "provider": str(snapshot.get("provider") or ("hfsy" if str(snapshot.get("profile") or "").startswith("hfsy-") else "ark")),
         "profile": str(snapshot.get("profile") or ""),
         "prompt": prompt,
         "status": str(snapshot.get("status") or "failed"),
@@ -201,6 +206,9 @@ def restore_history_task(snapshot: dict[str, Any]) -> dict[str, Any] | None:
         "folder_id": str(snapshot.get("folder_id") or ""),
         "history_version": int(snapshot.get("history_version") or 1),
     }
+    for field in ("board_id", "node_id", "provider_task_id", "submission_id"):
+        task[field] = str(snapshot.get(field) or "")
+    task["reference_bindings"] = snapshot.get("reference_bindings") or []
     return task
 
 
@@ -230,8 +238,8 @@ def load_task_history() -> None:
         TASKS.clear()
         for task in latest_snapshots.values():
             if task["status"] in {"queued", "running"}:
-                task["status"] = "failed"
-                task["error"] = "服务重启时任务尚未完成，未自动重跑，请重新提交。"
+                task["status"] = "paused" if task.get("provider_task_id") else "failed"
+                task["error"] = "服务重启，原任务可继续查询。" if task.get("provider_task_id") else "服务重启时任务尚未完成，请先核对供应商记录；未自动重新生成。"
                 task["finished_at"] = now()
                 task["queue_position"] = None
                 interrupted.append(task)
@@ -573,7 +581,7 @@ def public_task(task: dict[str, Any]) -> dict[str, Any]:
             "id", "kind", "provider", "profile", "prompt", "status", "created_at", "started_at",
             "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
             "local_image_url", "video_url", "local_video_url", "error", "queue_position",
-            "folder_id", "history_version",
+            "folder_id", "history_version", "board_id", "node_id", "reference_bindings", "provider_task_id", "submission_id",
         )
     }
     public["reference_files"] = [
@@ -645,21 +653,15 @@ def validate_task_input(
         raise ValueError("不支持的任务类型")
     if not prompt:
         raise ValueError("至少输入一条提示词")
-    if hfsy_client.is_hfsy_profile(profile):
-        spec = hfsy_client.MODEL_SPECS[profile]
-        if spec["kind"] != kind:
-            raise ValueError("图片模型与视频任务类型不匹配" if spec["kind"] == "image" else "视频模型与图片任务类型不匹配")
-        local_references = [ref for ref in references if ref.get("path") and not ref.get("url")]
-        if local_references:
-            tos_status = tos_uploader.config_status(private_env_value)
-            if not tos_status["ready"]:
-                raise RuntimeError(f"HFSY 本地素材需要配置 TOS：{', '.join(tos_status['missing'])}")
-        reference_contract = [
-            (str(ref.get("url") or f"https://tos-upload.invalid/{index}"), ref.get("mime", ""))
-            for index, ref in enumerate(references)
-        ]
-        hfsy_client.build_generation_request(profile, prompt, ratio, resolution, reference_contract, duration)
-        return "hfsy"
+    if profile in {lingganya_client.PROFILE, lingganya_client.VIDEO_PROFILE}:
+        if kind != ("video" if profile == lingganya_client.VIDEO_PROFILE else "image"):
+            raise ValueError("模型与任务类型不匹配")
+        if profile == lingganya_client.VIDEO_PROFILE and (not str(duration).isdigit() or not 5 <= int(duration) <= 15):
+            raise ValueError("SD 2.0 Mini 时长必须为 5–15 秒")
+        lingganya_client.validate(profile, prompt, ratio, resolution, references)
+        return "lingganya"
+    if profile.startswith("hfsy-"):
+        raise ValueError("HFSY 已移除，请选择灵感鸭或 Seedream 模型；历史素材仍可查看。")
     if kind == "video" and profile != "seedance-reference-video-ark-direct":
         raise ValueError("视频任务请使用 Seedance Reference Video")
     if kind == "image" and profile not in {"seedream43-ark-direct", "seedream50-pro-ark-direct"}:
@@ -677,10 +679,20 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
     folder_id = str(fields.getfirst("folder_id", "") or "")
     if not MEDIA_LIBRARY.folder_exists(folder_id):
         raise ValueError("收藏夹不存在，请刷新页面后重试")
+    submission_id = str(fields.getfirst("submission_id", "") or "")
+    if submission_id:
+        with LOCK:
+            existing = next((task for task in TASKS.values() if task.get("submission_id") == submission_id), None)
+            if existing:
+                return [existing]
+    try:
+        bindings = json.loads(fields.getfirst("reference_bindings", "[]"))
+    except (TypeError, ValueError):
+        raise ValueError("素材引用快照无效")
+    if not isinstance(bindings, list) or len(bindings) > 32:
+        raise ValueError("素材引用快照无效")
     shared_id = uuid.uuid4().hex[:10]
     references = copy_references(shared_id, fields, folder_id)
-    if hfsy_client.is_hfsy_profile(profile):
-        references.extend(parse_reference_urls(fields.getfirst("reference_urls", "")))
     ratio = fields.getfirst("ratio", "9:16")
     duration = fields.getfirst("duration", "15")
     resolution = fields.getfirst("resolution", "720p")
@@ -715,6 +727,11 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
                 ]) + 1,
                 "folder_id": folder_id,
                 "history_version": HISTORY_VERSION,
+                "board_id": str(fields.getfirst("board_id", "") or ""),
+                "node_id": str(fields.getfirst("node_id", "") or ""),
+                "reference_bindings": bindings,
+                "submission_id": submission_id,
+                "provider_task_id": "",
             }
             TASKS[task_id] = task
             created.append(task)
@@ -769,28 +786,22 @@ def download_video_result(video_url: str, task_id: str, folder_id: str = "") -> 
     return workspace_media_url(folder_id, "results", target.name)
 
 
-def run_hfsy_generation(task: dict[str, Any], api_key: str) -> dict[str, str]:
-    prepared: list[dict[str, str]] = []
-    hosted: list[dict[str, str]] = []
-    try:
-        for reference in task["reference_files"]:
-            if reference.get("url"):
-                prepared.append(reference)
-            else:
-                uploaded = tos_uploader.upload_reference(reference, private_env_value)
-                prepared.append(uploaded)
-                hosted.append(uploaded)
-        return hfsy_client.generate(
-            profile=task["profile"], prompt=task["prompt"], ratio=task["ratio"],
-            resolution=task["resolution"], references=prepared,
-            duration=task["duration"], api_key=api_key,
-        )
-    finally:
-        try:
-            tos_uploader.delete_hosted_references(hosted, private_env_value)
-        except Exception as exc:
-            # Cleanup must not hide a successful generation or its real failure.
-            print(f"[{time.strftime('%H:%M:%S')}] TOS temporary-object cleanup failed: {exc}")
+def save_provider_image(content: bytes, task_id: str, folder_id: str = "") -> str:
+    from PIL import Image
+    import io
+    with Image.open(io.BytesIO(content)) as image:
+        image.verify()
+        suffix = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}.get(image.format)
+    if not suffix:
+        raise ValueError("供应商返回了不支持的图片格式")
+    directory = workspace_result_dir(folder_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / (task_id + suffix)
+    temporary = target.with_suffix(suffix + ".part")
+    temporary.write_bytes(content)
+    temporary.replace(target)
+    persist_cloud_image(target)
+    return workspace_media_url(folder_id, "results", target.name)
 
 
 def run_task(task_id: str) -> None:
@@ -806,13 +817,19 @@ def run_task(task_id: str) -> None:
     references = task["reference_files"]
     try:
         print(f"[{time.strftime('%H:%M:%S')}] starting {task.get('provider', 'ark')}/{task['kind']} task {task_id}: {len(references)} reference file(s)")
-        if task.get("provider") == "hfsy":
-            api_key = private_env_value("HFSY_API_KEY")
+        if task.get("provider") == "lingganya":
+            api_key = private_env_value("LINGGANYA_API_KEY")
             if not api_key:
-                raise RuntimeError("未配置 HFSY_API_KEY。请在 .env 中填写 HFSY API Key。")
-            result = run_hfsy_generation(task, api_key)
-            image_url = str(result.get("result_url") or "") if task["kind"] == "image" else ""
-            video_url = str(result.get("result_url") or "") if task["kind"] == "video" else ""
+                raise RuntimeError("未配置 LINGGANYA_API_KEY")
+            def remember_upstream(value):
+                with LOCK:
+                    task["provider_task_id"] = value
+                    record_task_event("upstream_created", task)
+            image_content = lingganya_client.generate(task, api_key, remember_upstream)
+            result = {}
+            image_url = video_url = ""
+        elif task.get("provider") == "hfsy":
+            raise RuntimeError("HFSY 接入已移除，历史任务不会重新提交")
         else:
             command = [sys.executable, str(SKILL_CALLER), "run", "--profile", task["profile"], "--prompt", task["prompt"]]
             if task["kind"] == "image":
@@ -838,14 +855,23 @@ def run_task(task_id: str) -> None:
             video_url = str(result.get("video_url") or "")
         local_image_url = ""
         local_video_url = ""
-        if task["kind"] == "image":
+        if task.get("provider") == "lingganya":
+            if task["kind"] == "image":
+                local_image_url = save_provider_image(image_content, task_id, str(task.get("folder_id") or ""))
+            else:
+                if len(image_content) < 12 or image_content[4:8] != b"ftyp":
+                    raise ValueError("供应商未返回有效 MP4 文件")
+                directory = workspace_result_dir(str(task.get("folder_id") or ""))
+                directory.mkdir(parents=True, exist_ok=True)
+                target = directory / (task_id + ".mp4")
+                temporary = target.with_suffix(".part")
+                temporary.write_bytes(image_content)
+                temporary.replace(target)
+                local_video_url = workspace_media_url(str(task.get("folder_id") or ""), "results", target.name)
+        elif task["kind"] == "image":
             if not image_url:
                 raise RuntimeError("模型未返回图片地址")
             local_image_url = download_image_result(image_url, task_id, str(task.get("folder_id") or ""))
-        elif task.get("provider") == "hfsy":
-            if not video_url:
-                raise RuntimeError("模型未返回视频地址")
-            local_video_url = download_video_result(video_url, task_id, str(task.get("folder_id") or ""))
         with LOCK:
             task["status"] = "completed"
             task["image_url"] = image_url
@@ -858,6 +884,11 @@ def run_task(task_id: str) -> None:
             task["finished_at"] = now()
             register_completed_task(task)
             record_task_event("completed", task)
+    except lingganya_client.PendingTask as exc:
+        with LOCK:
+            task["status"] = "paused"
+            task["error"] = str(exc)
+            record_task_event("paused", task)
     except subprocess.TimeoutExpired:
         with LOCK:
             task["status"] = "failed"
@@ -920,6 +951,19 @@ class StudioHandler(SimpleHTTPRequestHandler):
             with LOCK:
                 tasks = sorted(TASKS.values(), key=lambda item: item["created_at"], reverse=True)
                 return self.respond_json({"tasks": [public_task(task) for task in tasks]})
+        if path == "/api/provider-pricing":
+            try:
+                raw, _ = lingganya_client.request("/api/subsite/pricing", private_env_value("LINGGANYA_API_KEY"), timeout=15)
+                price_data = json.loads(raw).get("data", {})
+                prices = price_data.get("model_price", {})
+                modes = price_data.get("billing_mode", {})
+                return self.respond_json({"mini": prices.get("sd-2.0-mini") if modes.get("sd-2.0-mini") == "per_second" else None,
+                                          "sunburst": prices.get(lingganya_client.MODEL) if modes.get(lingganya_client.MODEL) == "per_request" else None,
+                                          "source": "供应商当前公开目录估算，结算以账户账单为准"})
+            except Exception:
+                return self.respond_json({"mini": None, "sunburst": None})
+        if path == "/api/boards":
+            return self.respond_json(BOARDS.load())
         if path == "/api/usage":
             return self.respond_json(daily_usage())
         if path == "/api/storage":
@@ -941,6 +985,9 @@ class StudioHandler(SimpleHTTPRequestHandler):
         if path in {"/", "/index.html"}:
             self.path = "/index.html"
         if path in {"/cloud-images.json", "/cloud-images.tmp"}:
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        if path not in {"/", "/index.html", "/app.js", "/style.css", "/canvas.html", "/canvas.js", "/canvas.css"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         return super().do_GET()
@@ -1040,6 +1087,31 @@ class StudioHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
+            if path == "/api/boards/export":
+                content = build_export(self.read_json(max_bytes=8 * 1024 * 1024),
+                                       {"results": RESULTS_DIR, "collections": COLLECTIONS_DIR, "uploads": UPLOADS_DIR, "inspirations": INSPIRATIONS_DIR}, CLOUD_IMAGES, private_env_value)
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Disposition", 'attachment; filename="storyboard.zip"')
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+                return
+            if path == "/api/boards":
+                return self.respond_json(BOARDS.save(self.read_json(max_bytes=8 * 1024 * 1024)))
+            resume = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)/resume", path)
+            if resume:
+                with LOCK:
+                    task = TASKS.get(resume.group(1))
+                    if not task or task.get("provider") != "lingganya" or not task.get("provider_task_id"):
+                        raise ValueError("没有可继续查询的供应商任务")
+                    if task["status"] not in {"paused", "failed"}:
+                        raise ValueError("该任务正在执行或已完成")
+                    task["status"] = "queued"
+                    task["error"] = ""
+                    record_task_event("resumed", task)
+                    EXECUTORS[task["kind"]].submit(run_task, task["id"])
+                return self.respond_json({"ok": True})
             if path == "/api/storage/sync":
                 if not tos_uploader.config_status(private_env_value)["ready"]:
                     raise ValueError("TOS 未配置，原图保留在本地")
@@ -1054,7 +1126,8 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 return self.respond_json({"ok": True})
             if path == "/api/tasks":
                 fields = self.read_multipart()
-                tasks = create_tasks(fields)
+                with LOCK:
+                    tasks = create_tasks(fields)
                 return self.respond_json({"ok": True, "tasks": [public_task(task) for task in tasks]}, HTTPStatus.ACCEPTED)
             if path == "/api/library/folders":
                 folder = MEDIA_LIBRARY.create_folder(str(self.read_json().get("name") or ""))
@@ -1089,6 +1162,8 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 asset = move_library_asset(move_match.group(1), str(self.read_json().get("folder_id") or ""))
                 return self.respond_json({"ok": True, "asset": asset})
             return self.respond_json({"ok": False, "error": "接口不存在"}, HTTPStatus.NOT_FOUND)
+        except BoardConflict as exc:
+            return self.respond_json({"ok": False, "error": str(exc)}, HTTPStatus.CONFLICT)
         except ValueError as exc:
             return self.respond_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:
@@ -1121,7 +1196,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         except Exception as exc:
             return self.respond_json({"ok": False, "error": str(exc)[:500] or "请求处理失败"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
-    def read_json(self) -> dict[str, Any]:
+    def read_json(self, max_bytes: int = 65_536) -> dict[str, Any]:
         content_type = self.headers.get("Content-Type", "")
         if not content_type.startswith("application/json"):
             raise ValueError("请求格式必须为 application/json")
@@ -1129,7 +1204,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("请求长度无效") from exc
-        if length <= 0 or length > 65_536:
+        if length <= 0 or length > max_bytes:
             raise ValueError("请求内容不能为空或过大")
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))

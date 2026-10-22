@@ -27,22 +27,18 @@ class GithubPackagingTests(unittest.TestCase):
         example = (ROOT / ".env.example").read_text(encoding="utf-8")
         self.assertIn("ARK_API_KEY=", example)
         self.assertIn("SEEDANCE_ARK_API_KEY=", example)
-        self.assertIn("HFSY_API_KEY=", example)
+        self.assertIn("LINGGANYA_API_KEY=", example)
         for name in ("TOS_ACCESS_KEY=", "TOS_SECRET_KEY=", "TOS_ENDPOINT=", "TOS_REGION=", "TOS_BUCKET="):
             self.assertIn(name, example)
         self.assertNotRegex(example, r"ark-[A-Za-z0-9_-]{10,}")
         self.assertNotRegex(example, r"sk-[A-Za-z0-9_-]{10,}")
 
-    def test_readme_documents_hfsy_provider_and_confirmed_models(self):
+    def test_readme_documents_current_providers(self):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
-        self.assertIn("HFSY_API_KEY", readme)
-        for model in ("gpt-image-2", "gpt-image-2pro", "nano-banana-2", "nano-banana-pro"):
+        for model in ("gpt-image-2.5-sunburst-special", "sd-2.0-mini", "Seedream 5.0 Pro"):
             self.assertIn(model, readme)
-        self.assertNotIn("minimax-h3", readme)
-        self.assertNotIn("`sd-2`", readme)
-        self.assertIn("`sd-2.0`", readme)
-        self.assertIn("4–15 秒", readme)
-        self.assertIn("sd-2.5-720", readme)
+        self.assertIn("LINGGANYA_API_KEY", readme)
+        self.assertFalse((ROOT / "hfsy_client.py").exists())
 
     def test_server_uses_the_bundled_model_caller(self):
         import server

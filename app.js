@@ -29,14 +29,10 @@ const localVideoPreviewObserver = 'IntersectionObserver' in window ? new Interse
 }, { rootMargin: '320px 0px' }) : null;
 
 const MODEL_CATALOG = {
+  'lingganya-sd-2.0-mini': { label: 'SD 2.0 Mini · 720P', group: '灵感鸭', provider: 'lingganya', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 6, maxVideos: 3, maxAudios: 3, ratios: ['16:9','9:16'], resolutions: ['720p'], duration: [5,6,7,8,9,10,11,12,13,14,15], intro: '灵感鸭 · SD 2.0 Mini，5–15 秒，固定 720p。' },
+  'lingganya-gpt-image-2.5-sunburst-special': { label: 'GPT Image 2.5 · Sunburst Special', group: '灵感鸭', provider: 'lingganya', kind: 'image', accept: 'image/png,image/jpeg,image/webp', maxImages: 8, ratios: ['1:1'], resolutions: ['1K'], intro: '灵感鸭 · Sunburst Special，官方基础规格 1024×1024；多图数量由供应商校验。' },
   'seedream50-pro-ark-direct': { label: 'Seedream 5.0 Pro · 2K', provider: 'ark', kind: 'image', accept: 'image/*', maxImages: 8, ratios: [], resolutions: [], intro: '使用 Seedream 5.0 Pro 生成图片。' },
   'seedream43-ark-direct': { label: 'Seedream 4.3 · 2K', provider: 'ark', kind: 'image', accept: 'image/*', maxImages: 8, ratios: [], resolutions: [], intro: '使用 Seedream 4.3 生成图片。' },
-  'hfsy-gpt-image-2': { label: 'GPT Image 2 · 1K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 6, ratios: ['1:1','5:4','9:16','16:9','4:3','3:2','4:5','3:4','2:3','21:9'], resolutions: ['1K'], intro: 'HFSY · GPT Image 2，支持最多 6 张参考图。' },
-  'hfsy-gpt-image-2pro': { label: 'GPT Image 2 Pro · 2K / 4K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 4, ratios: ['1:1','5:4','9:16','16:9','4:3','3:2','4:5','3:4','2:3','21:9'], resolutions: ['2K','4K'], intro: 'HFSY · GPT Image 2 Pro，支持原生 2K / 4K。' },
-  'hfsy-nano-banana-2': { label: 'Nano Banana 2 · 1K / 2K / 4K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 7, ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9','9:21','2:1','1:2'], resolutions: ['1K','2K','4K'], intro: 'HFSY · Nano Banana 2，支持多图参考。' },
-  'hfsy-nano-banana-pro': { label: 'Nano Banana 2 Pro · 1K / 2K / 4K', group: 'HFSY API', provider: 'hfsy', kind: 'image', accept: 'image/*', maxImages: 7, ratios: ['1:1','16:9','9:16','4:3','3:4','3:2','2:3','5:4','4:5','21:9','9:21','2:1','1:2'], resolutions: ['1K','2K','4K'], intro: 'HFSY · Nano Banana Pro，面向高质量商业图片。' },
-  'hfsy-sd-2-0': { label: 'SD 2.0 · 720P', group: 'HFSY API', provider: 'hfsy', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 9, maxVideos: 3, maxAudios: 3, promptLimit: 5000, ratios: ['16:9','9:16','21:9','4:3','1:1','3:4'], resolutions: ['720p'], duration: [15,14,13,12,11,10,9,8,7,6,5,4], intro: 'HFSY · SD 2.0（sd-2.0），720P，支持图片、视频与音频混合参考。' },
-  'hfsy-sd-2-5-720': { label: 'SD 2.5 · 720P', group: 'HFSY API', provider: 'hfsy', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 30, maxVideos: 10, maxAudios: 10, promptLimit: 5000, ratios: ['16:9','9:16','4:3','1:1','3:4'], resolutions: ['720p'], duration: [30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4], intro: 'HFSY · SD 2.5 720P（sd-2.5-720），支持图片、视频与音频混合参考。' },
   'seedance-reference-video-ark-direct': { label: 'Seedance · Reference Video · 720p', provider: 'ark', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 8, maxVideos: 8, maxAudios: 8, ratios: ['9:16','16:9','1:1'], resolutions: ['720p'], duration: [15,10,5], intro: '使用 Seedance 生成带音频的视频，支持图片、视频、音频参考。' }
 };
 
@@ -102,7 +98,7 @@ function applySelectedModel() {
   document.querySelector('#dropzone').classList.remove('hidden');
   document.querySelector('#reference-preview').classList.remove('hidden');
   document.querySelector('#reference-hint').textContent = model.kind === 'video'
-    ? (model.provider === 'hfsy' ? `可选，图片最多 ${model.maxImages} 张＋视频最多 ${model.maxVideos} 条＋音频最多 ${model.maxAudios} 条` : '可选，支持图 / 视频 / 音频')
+    ? (model.provider === 'lingganya' ? `可选，图片最多 ${model.maxImages} 张＋视频最多 ${model.maxVideos} 条＋音频最多 ${model.maxAudios} 条` : '可选，支持图 / 视频 / 音频')
     : `可选，参考图最多 ${model.maxImages} 张`;
   state.files = state.files.filter(file => model.accept.split(',').some(pattern => file.type.startsWith(pattern.replace('/*', '/'))));
   renderReferences();
@@ -657,13 +653,12 @@ async function updateHealth() {
   try {
     const data = await (await fetch('/api/health')).json();
     const model = selectedModel();
-    const ready = model.provider === 'hfsy' ? data.hfsy_ready : (state.kind === 'video' ? data.video_ready : data.image_ready);
+    const ready = model.provider === 'lingganya' ? data.lingganya_ready : (state.kind === 'video' ? data.video_ready : data.image_ready);
     const workerCount = data.workers[state.kind];
     chip.className = `system-status ${ready ? 'ready' : 'error'}`;
     text.textContent = ready
-      ? `${model.provider === 'hfsy' ? 'HFSY' : 'ARK'} 凭证已就绪 · ${workerCount} 个并发制作位`
-      : model.provider === 'hfsy' ? '未找到 HFSY_API_KEY 配置' : (state.kind === 'video' ? '未找到 SEEDANCE_ARK_API_KEY 配置' : '未找到 ARK_API_KEY 配置');
-    if (model.provider === 'hfsy' && !data.tos_ready) document.querySelector('#reference-hint').textContent = '未配置 TOS，无法上传本地素材';
+      ? `${model.provider === 'lingganya' ? '灵感鸭' : 'ARK'} 凭证已就绪 · ${workerCount} 个并发制作位`
+      : model.provider === 'lingganya' ? '未找到 LINGGANYA_API_KEY 配置' : (state.kind === 'video' ? '未找到 SEEDANCE_ARK_API_KEY 配置' : '未找到 ARK_API_KEY 配置');
   } catch { chip.className = 'system-status error'; text.textContent = '本地服务不可用'; }
 }
 form.addEventListener('submit', async event => {

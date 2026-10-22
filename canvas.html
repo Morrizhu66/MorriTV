@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Model Studio · 故事画板</title>
+    <link rel="stylesheet" href="/canvas.css" />
+  </head>
+  <body>
+    <header class="top">
+      <a class="brand" href="/canvas.html"
+        ><b>M<span>•</span></b
+        ><span>MODEL STUDIO<small>故事，从这里发生。</small></span></a
+      >
+      <div class="project-area">
+        <select id="project-select" aria-label="项目"></select
+        ><button id="project-menu" title="项目设置">•••</button
+        ><button id="new-project">＋ 项目</button>
+      </div>
+      <div class="top-right">
+        <span id="save-state" role="status">正在打开画板…</span
+        ><button id="task-toggle">任务 <b id="task-count">0</b></button
+        ><button id="export-board">导出画板</button
+        ><button id="import-board">导入画板</button
+        ><input
+          hidden
+          id="board-file"
+          type="file"
+          accept="application/json"
+        /><button id="export-shots">导出采用素材</button
+        ><a href="/index.html">旧版控制台 ↗</a>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="sidebar-heading">
+          <span>画板 / BOARDS</span
+          ><button id="new-board" title="新建画板">＋</button>
+        </div>
+        <div id="board-list"></div>
+        <button id="rename-board" class="subtle">重命名当前画板</button>
+        <div class="sidebar-heading"><span>创作工具</span></div>
+        <button class="tool" data-create="image">
+          <i>▧</i><span>图片生成<small>从想法，到画面</small></span
+          ><kbd>I</kbd></button
+        ><button class="tool" data-create="video">
+          <i>▷</i><span>视频生成<small>让画面开始叙事</small></span
+          ><kbd>V</kbd></button
+        ><button class="tool" data-create="text">
+          <i>T</i><span>文本 / 剧本</span><kbd>T</kbd></button
+        ><button class="tool" id="upload-button">
+          <i>↥</i><span>上传素材</span></button
+        ><input
+          hidden
+          id="upload"
+          type="file"
+          multiple
+          accept="image/*,video/*"
+        /><button class="tool" id="library-button">
+          <i>▦</i><span>素材库<small>复用已有图片与视频</small></span>
+        </button>
+        <div class="sidebar-heading"><span>整理画板</span></div>
+        <button class="subtle" id="group-button">将所选节点分组</button
+        ><button class="subtle" id="arrange-button">自动排列所选 / 全部</button>
+        <div class="sidebar-foot">
+          <span class="tiny-label">CREATIVE SPACE</span>
+          <p>一个镜头，<br />无限种可能。</p>
+          <small
+            >空格拖动平移 · ⌘ / Ctrl + 滚轮缩放<br />Shift 多选 ·
+            拖动空白处框选<br />⌘Z 撤销 · ⌘⇧Z 重做</small
+          ><span id="provider-state"></span>
+        </div>
+      </aside>
+      <main id="viewport" tabindex="0" aria-label="无限创作画板">
+        <div class="canvas-top">
+          <div>
+            <span class="tiny-label">STORY CANVAS</span>
+            <h1 id="board-title">我的第一场戏</h1>
+          </div>
+          <div class="canvas-actions">
+            <input
+              id="node-search"
+              placeholder="搜索节点，回车定位"
+              aria-label="搜索节点"
+            /><button id="undo" title="撤销">↶</button
+            ><button id="redo" title="重做">↷</button>
+          </div>
+        </div>
+        <div id="world">
+          <svg id="edges" aria-hidden="true"></svg>
+          <div id="nodes"></div>
+        </div>
+        <div id="selection-box" hidden></div>
+        <div id="empty">
+          <div class="empty-symbol">✳</div>
+          <span class="tiny-label">A NEW SCENE STARTS HERE</span>
+          <h2>把想法，铺成故事。</h2>
+          <p>
+            创建一个生成节点，或把参考素材拖到这里。<br />在提示词里输入
+            @，连接画板里的角色与场景。
+          </p>
+          <button class="primary" data-create="image">＋ 创建图片节点</button
+          ><button id="empty-upload">导入参考素材</button>
+        </div>
+        <div class="navigation">
+          <button id="fit">适应画板</button><button id="zoom-out">−</button
+          ><span id="zoom-label">100%</span><button id="zoom-in">＋</button
+          ><button id="locate">定位所选</button>
+        </div>
+        <svg id="minimap" viewBox="0 0 180 110" aria-label="画板缩略地图"></svg>
+        <div id="reference-mode" hidden>
+          点击一个素材节点添加引用 <button id="cancel-reference">取消</button>
+        </div>
+      </main>
+    </div>
+    <footer class="shot-strip">
+      <div class="shot-label">
+        <span class="tiny-label">STORY ORDER</span><strong>镜头顺序</strong
+        ><button id="new-shot">＋ 镜头</button>
+      </div>
+      <div id="shots"></div>
+      <span class="shot-note">移动节点不改变镜头顺序</span>
+    </footer>
+    <div id="toast" role="status" hidden></div>
+    <div id="mention-menu" class="floating-menu" hidden></div>
+    <div id="connect-menu" class="floating-menu" hidden></div>
+    <dialog id="library-dialog">
+      <header>
+        <div>
+          <span class="tiny-label">ASSET LIBRARY</span>
+          <h2>让好素材继续生长。</h2>
+        </div>
+        <button data-close>×</button>
+      </header>
+      <div class="library-controls">
+        <input id="asset-search" placeholder="搜索名称 / 提示词" /><select
+          id="asset-kind"
+        >
+          <option value="">全部类型</option>
+          <option value="image">图片</option>
+          <option value="video">视频</option>
+        </select>
+      </div>
+      <div id="asset-list"></div>
+      <p id="library-note"></p>
+    </dialog>
+    <dialog id="task-dialog">
+      <header>
+        <h2>任务中心</h2>
+        <button data-close>×</button>
+      </header>
+      <p>关闭画板页面不影响本机服务中的任务；请保持服务运行。</p>
+      <div id="task-list"></div>
+    </dialog>
+    <dialog id="preview-dialog">
+      <header>
+        <h2 id="preview-title">结果预览</h2>
+        <button data-close>×</button>
+      </header>
+      <div id="preview-content"></div>
+    </dialog>
+    <dialog id="edit-dialog">
+      <form id="edit-form">
+        <header>
+          <h2 id="edit-title"></h2>
+          <button type="button" data-close>×</button>
+        </header>
+        <div id="edit-fields"></div>
+        <footer>
+          <button type="button" data-close>取消</button
+          ><button class="primary" type="submit">保存</button>
+        </footer>
+      </form>
+    </dialog>
+    <script src="/canvas.js"></script>
+  </body>
+</html>
