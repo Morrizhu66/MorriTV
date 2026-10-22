@@ -83,7 +83,10 @@ class HfsyServerIntegrationTests(unittest.TestCase):
         self.assertEqual(task["local_image_url"], "/media/results/hfsy-task.png")
 
     def test_health_flags_report_hfsy_readiness_without_returning_secret(self):
-        with patch.object(server, "private_env_value", side_effect=lambda key: "do-not-leak" if key == "HFSY_API_KEY" else ""):
+        config = Path(self.temp_dir.name) / ".env"
+        with patch.object(server, "PRIVATE_ENV", config), patch.dict(server.os.environ, {}, clear=True):
+            self.assertFalse(server.health_flags()["hfsy_ready"])
+            config.write_text("HFSY_API_KEY=do-not-leak\n", encoding="utf-8")
             health = server.health_flags()
 
         self.assertTrue(health["hfsy_ready"])

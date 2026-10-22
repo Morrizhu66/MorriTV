@@ -25,12 +25,13 @@ HFSY 只接收公网 URL，所以页面中选择的本地参考素材会先自�
 
 ## 2. 配置
 
-要求：Python 3.9 或更高版本。项目仅使用 Python 标准库，无需安装第三方依赖。
+要求：Python 3.9–3.12（当前服务使用的 `cgi` 模块在 Python 3.13 中已移除）。TOS 上传和图片处理依赖 `requirements.txt` 中的 TOS SDK 与 Pillow。
 
 ```bash
 git clone <你的仓库地址>
 cd <项目目录>
 cp .env.example .env
+python3 -m pip install --target .deps -r requirements.txt
 ```
 
 打开 `.env`，填入申请到的 Key：
@@ -62,7 +63,7 @@ Start Model Studio.command
 其他系统或习惯使用终端的用户可以运行：
 
 ```bash
-python3 server.py
+PYTHONPATH=.deps python3 server.py
 ```
 
 然后打开 [http://127.0.0.1:4178](http://127.0.0.1:4178)。不要直接打开 `index.html`，否则页面无法调用本地服务。
@@ -83,7 +84,7 @@ pkill -f 'server.py'
 ## 测试
 
 ```bash
-python3 -m unittest discover -v
+PYTHONPATH=.deps python3 -m unittest discover -v
 ```
 
 
