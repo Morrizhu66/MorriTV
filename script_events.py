@@ -47,14 +47,15 @@ class ScriptEvents:
                     args = {}
                 skill = args.get('name', '')
                 label = self.skill_labels.get(skill, skill) if data.get('name') == 'skill' else data.get('name', '工具')
-                self.items[ident] = dict(id=ident, type='trace', kind='read', label='读取 Skill', detail=label)
-                self.activity = '正在读取写作 Skill'
+                self.items[ident] = dict(id=ident, type='trace', kind='read', label='读取 Skill' if data.get('name')=='skill' else '执行工具', detail=label)
+                self.activity = '正在读取写作 Skill' if data.get('name')=='skill' else '正在执行 '+label
             elif kind == 'tool/result':
                 message = data.get('message', {})
                 item = self.items.get('tool-'+message.get('toolCallId', ''))
                 if not item:
                     return
-                item['label'] = 'Skill 读取失败' if message.get('isError') else '已读取 Skill'
+                is_skill=item['label']=='读取 Skill'
+                item['label'] = ('Skill 读取失败' if message.get('isError') else '已读取 Skill') if is_skill else ('工具执行失败' if message.get('isError') else '工具执行完成')
             elif kind == 'assistant/message':
                 message = data.get('message', data)
                 self.text = ''.join(block.get('text', '') for block in message.get('content', []) if block.get('type') == 'text')

@@ -25,6 +25,18 @@ class RuntimeCompatibilityTests(unittest.TestCase):
         self.assertNotIn('API Key', error)
         self.assertNotIn('超时', error)
 
+    def test_native_skill_can_be_registered_in_harness_workspace(self):
+        from unittest.mock import patch
+        import script_studio as studio
+        with tempfile.TemporaryDirectory() as tmp, patch.object(studio, 'DATA', Path(tmp)):
+            folder = Path(tmp) / 'workspaces' / 'install-test' / 'skill-test'
+            folder.mkdir(parents=True)
+            content = '---\nname: workspace-skill\ndescription: Test\n---\nKeep native files.'
+            (folder / 'SKILL.md').write_text(content)
+            item = studio.register_native_skill(folder)
+            self.assertEqual(Path(tmp) / item['directory'], folder)
+            self.assertEqual((folder / 'SKILL.md').read_text(), content)
+
     def test_unknown_errors_do_not_expose_provider_details(self):
         self.assertNotIn('secret-value', worker_error(RuntimeError('secret-value')))
 
