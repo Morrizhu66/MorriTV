@@ -4,6 +4,8 @@ function references(value, choices){return choices.filter(c=>{let at=value.index
 function mount(textarea,{candidates=()=>[],onPick=()=>{},onRemove=()=>{},onSubmit}={}){
  const editor=document.createElement('div');editor.className='rich-prompt';editor.contentEditable='true';editor.role='textbox';editor.setAttribute('aria-multiline','true');editor.setAttribute('aria-label',textarea.getAttribute('aria-label')||'提示词');editor.dataset.placeholder=textarea.placeholder;
  const menu=document.createElement('div');menu.className='rich-mentions';menu.hidden=true;
+ menu.style.overscrollBehavior='contain';
+ menu.addEventListener('wheel',e=>e.stopPropagation(),{passive:true});
  textarea.after(editor,menu);textarea.hidden=true;let last='',composing=false;
  const text=()=>editor.textContent||'';
  function caret(){const s=getSelection();if(!s.rangeCount||!editor.contains(s.anchorNode))return text().length;const r=s.getRangeAt(0).cloneRange();r.selectNodeContents(editor);r.setEnd(s.anchorNode,s.anchorOffset);return r.toString().length;}

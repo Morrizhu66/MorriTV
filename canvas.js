@@ -1327,7 +1327,8 @@ function imageMentionCandidates(target) {
   let serial = Math.max(0, ...board().nodes.map(x => Number((x.referenceName || '').match(/^图片(\d+)$/)?.[1] || 0)), board().imageReferenceSerial || 0);
   for (const x of images) if (!x.referenceName) x.referenceName = '图片' + (++serial);
   board().imageReferenceSerial = serial;
-  return images.filter(x => x.id !== target.id).map(x => ({id:x.id,name:x.referenceName,url:thumb(version(x))}));
+  const connected = new Set((target.refs || []).map(ref => ref.nodeId));
+  return images.filter(x => x.id !== target.id).sort((a,b) => Number(connected.has(b.id))-Number(connected.has(a.id))).map(x => ({id:x.id,name:x.referenceName,url:thumb(version(x))}));
 }
 function drawEdges() {
   if (edgeFrame) return;
@@ -2809,7 +2810,7 @@ function duplicate(point) {
 $("#viewport").addEventListener(
   "wheel",
   (e) => {
-    if (e.target.closest("textarea,select,.dropdown,.floating-menu,.ui-popup")) return;
+    if (e.target.closest("textarea,select,.dropdown,.floating-menu,.ui-popup,.rich-mentions,.rich-prompt")) return;
     e.preventDefault();
     if (e.ctrlKey || e.metaKey)
       zoom(Math.exp(-e.deltaY * 0.006), e.clientX, e.clientY);

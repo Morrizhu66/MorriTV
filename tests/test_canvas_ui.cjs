@@ -227,3 +227,10 @@ test('poll recovers results oldest first and does not replace a selection with a
   n.currentVersion='old';await c.poll();assert.equal(n.currentVersion,'old');
   tasks.push(task('late',0));await c.poll();assert.equal(n.currentVersion,'old');
 });
+test('image mentions prioritize connected sources without renumbering images',()=>{
+ const nodes=[{id:'a',referenceName:'图片1'},{id:'b',referenceName:'图片2'},{id:'c',referenceName:'图片3'}];
+ const b={nodes};const c=vm.createContext({board:()=>b,version:()=>({kind:'image'}),thumb:()=>'/preview'});
+ vm.runInContext(section('function imageMentionCandidates(', 'function drawEdges('),c);
+ const items=c.imageMentionCandidates({id:'target',refs:[{nodeId:'c'}]});
+ assert.equal(items[0].id,'c');assert.equal(items[0].name,'图片3');assert.equal(items[1].id,'a');
+});
