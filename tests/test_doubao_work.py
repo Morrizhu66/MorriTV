@@ -92,6 +92,17 @@ class DoubaoWorkTests(unittest.TestCase):
             self.assertFalse(doubao_work.start_login()["ready"])
             thread.assert_not_called()
 
+    def test_missing_driver_fails_before_announcing_launch(self):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(doubao_work, "__file__", str(Path(directory) / "doubao_work.py")), \
+             patch.object(doubao_work, "_LOGIN", {"logging_in": False, "error": ""}), \
+             patch.object(doubao_work, "pending_task_id", return_value=""), \
+             patch.object(doubao_work.threading, "Thread") as thread:
+            with self.assertRaisesRegex(ValueError, "登录程序不在当前目录"):
+                doubao_work.start_login()
+            thread.assert_not_called()
+            self.assertFalse(doubao_work.status()["browser_open"])
+
     def test_durable_pending_and_process_lock(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

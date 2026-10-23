@@ -189,6 +189,8 @@ def main():
                 raise RuntimeError('豆包会话地址无效')
             page.goto(url, wait_until='domcontentloaded')
             if args.login:
+                page.bring_to_front()
+                (ROOT / 'login-open').write_text('open\n')
                 (ROOT / "ready").unlink(missing_ok=True)
                 page.get_by_test_id('general-agent-skill-button').wait_for(timeout=600000)
                 preflight(page)
@@ -210,6 +212,8 @@ def main():
                 pass
             raise
         finally:
+            if args.login:
+                (ROOT / 'login-open').unlink(missing_ok=True)
             context.close()
 
 

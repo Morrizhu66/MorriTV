@@ -26,7 +26,7 @@ def ready():
 
 def status():
     with _LOGIN_LOCK:
-        return {**_LOGIN, "ready": ready() and not _LOGIN["logging_in"] and not _LOGIN["error"]}
+        return {**_LOGIN, "browser_open": _LOGIN["logging_in"] and (STATE_DIR / "login-open").is_file(), "ready": ready() and not _LOGIN["logging_in"] and not _LOGIN["error"]}
 
 
 def start_login():
@@ -35,6 +35,11 @@ def start_login():
             return status()
         if pending_task_id():
             raise ValueError("当前已有生视频任务进行中，请等结束后再登录")
+        root = Path(__file__).resolve().parent
+        driver = root / "doubao_web.py"
+        if not driver.is_file():
+            raise ValueError("豆包登录程序不在当前目录，请从豆包功能分支重启 MorriTV 服务")
+        (STATE_DIR / "login-open").unlink(missing_ok=True)
         _LOGIN.update(logging_in=True, error="")
         def login():
             try:
@@ -46,9 +51,12 @@ def start_login():
                 data = json.loads(result.stdout)
                 if result.returncode or data.get("status") != "ready":
                     raise RuntimeError(data.get("error") or "豆包登录未完成，请重试")
+            except RuntimeError as exc:
+                with _LOGIN_LOCK:
+                    _LOGIN["error"] = str(exc)[:300]
             except Exception:
                 with _LOGIN_LOCK:
-                    _LOGIN["error"] = "豆包登录未完成，请重新打开登录工具；首次使用请确认已安装网页连接器依赖"
+                    _LOGIN["error"] = "豆包登录窗口启动失败，请确认 Chrome 和网页连接器依赖已安装，再重试"
             finally:
                 with _LOGIN_LOCK:
                     _LOGIN["logging_in"] = False
