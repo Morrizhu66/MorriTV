@@ -685,3 +685,9 @@ body.light .project-pill .brand img{filter:invert(1) hue-rotate(180deg);}
 :is(button,a,summary,[role="button"],[role="menuitem"]):focus-visible{background-color:var(--raised,var(--color-muted));}
 
 .ui-mention-popup .rich-mentions{position:static;inset:auto;min-width:0;max-height:230px;width:100%;padding:0;border:0;box-shadow:none;background:transparent;border-radius:0}.ui-mention-popup .rich-mentions .ui-menu-item{padding:10px 9px;border-radius:7px;gap:9px;font-size:12px;line-height:1.4}.ui-mention-popup .rich-mentions .ui-menu-item:hover,.ui-mention-popup .rich-mentions .ui-menu-item:focus{background:var(--raised,var(--color-muted));color:inherit}.ui-mention-popup .rich-mentions img{width:28px;height:28px;border-radius:5px}.ui-mention-popup{max-width:calc(100vw - 24px)}
+
+/* Selection belongs to the node surface, never its title or form controls. */
+.node.selected > .node-header{background:transparent!important}
+.node.selected .node-header .node-name::before{content:none}
+.node.selected > .node-body{outline:1.5px solid var(--accent)!important;outline-offset:3px;box-shadow:none!important}
+.node.group-node.selected{outline:1.5px solid var(--accent)!important;outline-offset:3px}

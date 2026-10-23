@@ -388,6 +388,12 @@ function renderNodes() {
     let el = old;
     if (!old || old._node !== n || old.dataset.signature !== signature) {
       el = renderNode(n);
+      // Retain the running loader across submit/queued/running updates.
+      const oldLoader=old?.querySelector('.generation-overlay'), nextLoader=el.querySelector('.generation-overlay');
+      if(oldLoader && nextLoader){
+        oldLoader.querySelector('.generation-label').textContent=nextLoader.querySelector('.generation-label').textContent;
+        nextLoader.replaceWith(oldLoader);
+      }
       if (old) { old.querySelectorAll("video").forEach(media => nodeMediaObserver.unobserve(media)); old.replaceWith(el); }
       if (slot === old) slot = el;
     }
@@ -1335,7 +1341,7 @@ function drawEdges() {
   edgeFrame = requestAnimationFrame(() => { edgeFrame = 0; paintEdges(); });
 }
 function paintEdges() {
-  const svg = $("#edges"); svg.querySelectorAll(".edge-hit,.edge-flow").forEach(p => p.remove()); const previous = new Map([...svg.querySelectorAll("[data-edge]")].map(p => [p.dataset.edge, p]));
+  const svg = $("#edges"); svg.querySelectorAll(".edge-hit").forEach(p => p.remove()); const flows = new Map([...svg.querySelectorAll(".edge-flow")].map(p => [p.dataset.flow, p])); const previous = new Map([...svg.querySelectorAll("[data-edge]")].map(p => [p.dataset.edge, p]));
   for (const n of board().nodes) {
     if (hiddenNode(n)) continue;
     const sourceFrame = version(n)?.sourceFrame;
@@ -1358,7 +1364,9 @@ function paintEdges() {
       if (!p.isConnected) svg.append(p);
       const current = tasksByNode.get(`${boardId}:${n.id}`)?.[0];
       if (pending.has(n.id) || (current && ["queued", "running"].includes(current.status))) {
-        const flow = p.cloneNode(); flow.removeAttribute("data-edge"); flow.setAttribute("class", "edge edge-flow"); flow.setAttribute("pathLength", "100"); svg.append(flow);
+        let flow = flows.get(key);
+        if (!flow) { flow=p.cloneNode();flow.removeAttribute("data-edge");flow.dataset.flow=key;flow.setAttribute("class","edge edge-flow");flow.setAttribute("pathLength","100");svg.append(flow); }
+        flow.setAttribute("d",p.getAttribute("d"));flows.delete(key);
       }
       const hit = p.cloneNode(); hit.removeAttribute("data-edge"); hit.setAttribute("class", "edge-hit");
       hit.setAttribute("tabindex", "0"); hit.setAttribute("role", "button"); hit.setAttribute("aria-label", `${source.name} → ${n.name}，按 Delete 断开引用`);
@@ -1370,6 +1378,7 @@ function paintEdges() {
     }
   }
   previous.forEach(p => p.remove());
+  flows.forEach(p => p.remove());
   drawMini();
 }
 function drawMini() {
@@ -1842,8 +1851,7 @@ async function poll() {
       renderNodes();
       drawEdges();
       renderShots();
-      if (mutated && selected.size === 1)
-        ensureNodeVisible(node([...selected][0]));
+      // Background task updates must never move the user’s viewport.
       if ($("#library-dialog").open && mutated) renderAssets();
     }
   } catch (e) {
