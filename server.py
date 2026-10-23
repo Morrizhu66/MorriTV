@@ -251,7 +251,7 @@ def load_task_history() -> None:
                 task["finished_at"] = now()
                 task["queue_position"] = None
                 interrupted.append(task)
-            if task.get("provider") == "doubao_work" and doubao_work.pending_task_id() == task["id"]:
+            if task["status"] != "cancelled" and task.get("provider") == "doubao_work" and doubao_work.pending_task_id() == task["id"]:
                 task["status"] = "paused"
                 task["error"] = "豆包连接中断，可继续查询原任务，不会重新生成。"
             TASKS[task["id"]] = task
@@ -838,10 +838,26 @@ def save_provider_image(content: bytes, task_id: str, folder_id: str = "") -> st
     return workspace_media_url(folder_id, "results", target.name)
 
 
+def cancel_task(task_id: str) -> None:
+    with LOCK:
+        task = TASKS.get(task_id)
+        if not task or task.get("provider") != "doubao_work":
+            raise ValueError("只支持终止豆包任务")
+        if task["status"] == "completed":
+            raise ValueError("已完成的任务不能终止")
+        task["status"] = "cancelled"
+        task["error"] = "已终止本地执行和查询；豆包端已提交的生成可能仍在运行。"
+        task["finished_at"] = now()
+        task["queue_position"] = None
+        task.pop("_doubao_recover", None)
+        record_task_event("cancelled", task)
+        doubao_work.cancel(task_id)
+
+
 def run_task(task_id: str) -> None:
     with LOCK:
         task = TASKS.get(task_id)
-        if not task:
+        if not task or task["status"] == "cancelled":
             return
         task["status"] = "running"
         task["started_at"] = now()
@@ -868,6 +884,9 @@ def run_task(task_id: str) -> None:
             image_url = video_url = ""
         elif task.get("provider") == "doubao_work":
             source = doubao_work.generate(task, private_env_value("DOUBAO_WORK_BRIDGE"))
+            with LOCK:
+                if task["status"] == "cancelled":
+                    return
             directory = workspace_result_dir(str(task.get("folder_id") or ""))
             directory.mkdir(parents=True, exist_ok=True)
             target = directory / f"{task_id}.mp4"
@@ -921,6 +940,8 @@ def run_task(task_id: str) -> None:
                 raise RuntimeError("模型未返回图片地址")
             local_image_url = download_image_result(image_url, task_id, str(task.get("folder_id") or ""))
         with LOCK:
+            if task["status"] == "cancelled":
+                return
             task["status"] = "completed"
             task["image_url"] = image_url
             task["local_image_url"] = local_image_url
@@ -934,11 +955,15 @@ def run_task(task_id: str) -> None:
             record_task_event("completed", task)
     except lingganya_client.PendingTask as exc:
         with LOCK:
+            if task["status"] == "cancelled":
+                return
             task["status"] = "paused"
             task["error"] = str(exc)
             record_task_event("paused", task)
     except subprocess.TimeoutExpired:
         with LOCK:
+            if task["status"] == "cancelled":
+                return
             task["status"] = "failed"
             task["error"] = "任务超过 32 分钟仍未结束，请在 Ark 后台确认状态。"
             task["finished_at"] = now()
@@ -946,6 +971,8 @@ def run_task(task_id: str) -> None:
             print(f"[{time.strftime('%H:%M:%S')}] task {task_id} failed: {task['error']}")
     except Exception as exc:
         with LOCK:
+            if task["status"] == "cancelled":
+                return
             task["status"] = "failed"
             if task.get("provider") == "doubao_work" and doubao_work.pending_task_id() == task["id"]:
                 task["status"] = "paused"
@@ -1221,6 +1248,10 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 return
             if path == "/api/boards":
                 return self.respond_json({**BOARDS.save(self.read_json(max_bytes=8 * 1024 * 1024)), "storage": "cloud" if BOARDS.remote_writer else "local"})
+            cancel = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)/cancel", path)
+            if cancel:
+                cancel_task(cancel.group(1))
+                return self.respond_json({"ok": True})
             resume = re.fullmatch(r"/api/tasks/([A-Za-z0-9_-]+)/resume", path)
             if resume:
                 with LOCK:

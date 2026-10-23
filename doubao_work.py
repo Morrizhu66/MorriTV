@@ -15,6 +15,8 @@ PROFILES = {key.replace(" ", "-"): value for key, value in PROFILES.items()}
 LOGIN_REQUIRED = "请在工具中找到豆包登录工具，登录豆包账号后再生成"
 _LOGIN_LOCK = threading.RLock()
 _LOGIN = {"logging_in": False, "error": ""}
+_PROCESS_LOCK = threading.RLock()
+_PROCESSES = {}
 
 RATIOS = {"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
 TIMEOUT = 1920
@@ -71,6 +73,48 @@ def pending_task_id():
         return str(json.loads((STATE_DIR / "pending.json").read_text()).get("task_id") or "")
     except (OSError, ValueError):
         return ""
+
+
+def cancel(task_id):
+    """Stop local work and abandon its recovery record; upstream may still run."""
+    with _PROCESS_LOCK:
+        process = _PROCESSES.get(task_id)
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        if pending_task_id() == task_id:
+            # Keep evidence, but use a fresh conversation for the next submission
+            # so an old late result can never be attached to the new task.
+            (STATE_DIR / "pending.json").replace(STATE_DIR / f"abandoned-{task_id}.json")
+            (STATE_DIR / "session.json").unlink(missing_ok=True)
+
+
+def _run_bridge(argv, *, task, input, text, capture_output, timeout, check):
+    task_id = task.get("id", "")
+    with _PROCESS_LOCK:
+        if task.get("status") == "cancelled":
+            raise RuntimeError("任务已终止")
+        process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=text)
+        _PROCESSES[task_id] = process
+    try:
+        try:
+            stdout, stderr = process.communicate(input=input, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            raise
+        if task.get("status") == "cancelled":
+            raise RuntimeError("任务已终止")
+        return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
+    finally:
+        with _PROCESS_LOCK:
+            if _PROCESSES.get(task_id) is process:
+                _PROCESSES.pop(task_id, None)
 
 
 def validate(kind, prompt, ratio, duration, references):
@@ -131,7 +175,7 @@ def generate(task, bridge_command=None, video_model=None):
         ],
     }
     try:
-        completed = subprocess.run(argv, input=json.dumps(request, ensure_ascii=False), text=True,
+        completed = _run_bridge(argv, task=task, input=json.dumps(request, ensure_ascii=False), text=True,
                                    capture_output=True, timeout=TIMEOUT, check=False)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError("生成超时，可重试") from exc

@@ -254,3 +254,35 @@ test('logged-out Doubao submission stops before save or upload', async () => {
   vm.runInContext(section('async function submitNodeRequest(', 'async function resumeTask('), c);
   for (const profile of profiles) await assert.rejects(c.submitNodeRequest({profile}), /豆包登录工具/);
 });
+test('Doubao termination offers only unfinished tasks and posts once after confirmation', async () => {
+  const requests=[];let polls=0,toasts=0;
+  const c=context({window:{confirm:()=>true},api:async (...args)=>requests.push(args),poll:async()=>polls++,toast:()=>toasts++});
+  vm.runInContext(section('function canCancelTask(', 'async function resumeTask('),c);
+  for (const status of ['queued','running','paused','failed']) assert.equal(c.canCancelTask({provider:'doubao_work',status}),true);
+  for (const status of ['completed','cancelled']) assert.equal(c.canCancelTask({provider:'doubao_work',status}),false);
+  assert.equal(c.canCancelTask({provider:'ark',status:'running'}),false);
+  await c.cancelTask({id:'t'});
+  assert.equal(requests[0][0],'/api/tasks/t/cancel');assert.equal(requests[0][1].method,'POST');
+  assert.equal(polls,1);assert.equal(toasts,1);
+  c.window.confirm=()=>false;await c.cancelTask({id:'t'});assert.equal(requests.length,1);
+});
+test('Doubao submits reference numbers in upload order while preserving the canvas snapshot', async () => {
+  for (const profile of ['seedance-2.5-db','seedance-2.0-db','seedance-2.0-fast-db','seedance-2.0-mini-db']) {
+    let form;
+    const uploaded=[];
+    const n={id:'n',type:'video',profile,prompt:'@图片3 与 图片2 对打，参考 @视频4；图片3保持外观，图片30不变',refs:[
+      {kind:'image',name:'图片3',url:'/media/three.png'},
+      {kind:'video',name:'视频4',url:'/media/four.mp4'},
+      {kind:'image',name:'图片2',url:'/media/two.png'}]};
+    const original=n.prompt;
+    const c=vm.createContext({DOUBAO_PROFILES:[profile],resolvePendingReferences:()=>false,board:()=>({nodes:[n]}),compatibility:()=>'',pending:new Set(),clone:structuredClone,uid:()=> 'submission',boardId:'b',touch(){},saving:false,save:async()=>{},dirty:false,render(){},FormData,
+      fetch:async url=>{uploaded.push(url);return {ok:true,blob:async()=>new Blob([url],{type:url.endsWith('.mp4')?'video/mp4':'image/png'})};},mediaURL:r=>r.url,
+      api:async(u,o)=>{if(u==='/api/doubao/status') return {ready:true};form=o.body;return {tasks:[{id:'t'}]};},tasks:[],rebuildTaskIndex(){},toast(){},poll:async()=>{}});
+    vm.runInContext(section('function providerReferencePrompt(', 'async function resumeTask('),c);
+    await c.submitNodeRequest(n);
+    assert.equal(form.get('prompts'),'@图片1 与 图片2 对打，参考 @视频1；图片1保持外观，图片30不变');
+    assert.deepEqual(uploaded,['/media/three.png','/media/four.mp4','/media/two.png']);
+    assert.equal(n.prompt,original);assert.equal(n.runs[0].snapshot.prompt,original);
+    assert.equal(JSON.parse(form.get('reference_bindings'))[0].name,'图片3');
+  }
+});

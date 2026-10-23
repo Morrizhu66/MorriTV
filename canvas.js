@@ -226,6 +226,7 @@ const statusName = (s) =>
     completed: "已完成",
     failed: "失败",
     paused: "查询已暂停",
+    cancelled: "已终止",
   })[s] || s;
 const toast = (message) => {
   $("#toast").textContent = message;
@@ -840,8 +841,9 @@ function buildGenerationEditor(n, expanded = false) {
       decorateHoverButton(gen.lastChild);
       if ((busy && current?.status !== "paused") || incompat)
         gen.lastChild.disabled = true;
+      if (canCancelTask(current)) gen.append(button("终止任务", () => cancelTask(current)));
       editor.append(gen);
-      if (current && ["failed", "paused"].includes(current.status))
+      if (current && ["failed", "paused", "cancelled"].includes(current.status))
         editor.append(
           make(
             "div",
@@ -1697,7 +1699,7 @@ async function submitNode(n) {
     renderTaskList(); if (!$("#task-dialog").open) $("#task-dialog").showModal();
   } finally { pending.delete(n.id); render(); }
 }
-function providerReferencePrompt(prompt, refs) {
+function providerReferencePrompt(prompt, refs, plainNumbered = false) {
   let images = 0, videos = 0;
   const media = refs.filter(r => r.kind !== "text").map(ref => ({
     ref, label: ref.kind === "video" ? `视频${++videos}` : `图片${++images}`,
@@ -1706,9 +1708,11 @@ function providerReferencePrompt(prompt, refs) {
   // Scan the original text once: generated labels must never be remapped.
   let result = "";
   for (let i = 0; i < prompt.length;) {
-    const match = choices.find(({ref}) => prompt.startsWith("@" + ref.name, i) &&
-      (!/^(图片|视频)\d+$/.test(ref.name) || !/\d/.test(prompt[i + ref.name.length + 1] || "")));
-    if (match) { result += "@" + match.label; i += match.ref.name.length + 1; }
+    const prefix = prompt[i] === "@" ? "@" : "";
+    const match = choices.find(({ref}) => (prefix || (plainNumbered && /^(图片|视频)\d+$/.test(ref.name))) &&
+      prompt.startsWith(prefix + ref.name, i) &&
+      (!/^(图片|视频)\d+$/.test(ref.name) || !/\d/.test(prompt[i + ref.name.length + prefix.length] || "")));
+    if (match) { result += prefix + match.label; i += match.ref.name.length + prefix.length; }
     else result += prompt[i++];
   }
   for (const ref of refs.filter(r => r.kind === "text")) result += "\n" + ref.name + "：" + ref.text;
@@ -1756,9 +1760,7 @@ async function submitNodeRequest(n) {
     form.set("node_id", n.id);
     form.set("submission_id", submissionId);
     form.set("reference_bindings", JSON.stringify(refs));
-    const prompt = DOUBAO_PROFILES.includes(snapshot.profile)
-      ? snapshot.prompt
-      : providerReferencePrompt(snapshot.prompt, refs);
+    const prompt = providerReferencePrompt(snapshot.prompt, refs, DOUBAO_PROFILES.includes(snapshot.profile));
     let imageIndex = 0,
       videoIndex = 0;
     for (const ref of refs) {
@@ -1806,6 +1808,15 @@ async function submitNodeRequest(n) {
     pending.delete(originalNode.id);
     render();
   }
+}
+function canCancelTask(task) {
+  return task?.provider === "doubao_work" && ["queued", "running", "paused", "failed"].includes(task.status);
+}
+async function cancelTask(task) {
+  if (!window.confirm("终止本地执行和查询？豆包端已提交的生成可能仍在运行，后续不会再回填这个任务。")) return;
+  await api(`/api/tasks/${task.id}/cancel`, { method: "POST" });
+  await poll();
+  toast("任务已终止");
 }
 async function resumeTask(task) {
   await api(`/api/tasks/${task.id}/resume`, { method: "POST" });
@@ -2050,6 +2061,7 @@ function renderTaskList() {
         }));
         actions.append(button("复制完整输入", () => copyTaskInput(t, source)));
         if (t.status === "paused") actions.append(button("继续查询", () => resumeTask(t)));
+        if (canCancelTask(t)) actions.append(button("终止任务", () => cancelTask(t)));
         if (t.status === "failed") {
           const retry = button(retryingTasks.has(t.id) ? "正在提交…" : "重新生成", () => retryTaskInput(t, source));
           retry.disabled = retryingTasks.has(t.id) || !MODELS[t.profile];

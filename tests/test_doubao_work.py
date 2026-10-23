@@ -29,7 +29,7 @@ class DoubaoWorkTests(unittest.TestCase):
                               "print(json.dumps({'status':'completed','tool':'doubao-creative-video','video_file':sys.argv[1]}))\n")
             bridge.chmod(0o700)
             task = {"prompt": "图一", "ratio": "16:9", "duration": "4", "reference_files": refs}
-            with patch.object(doubao_work.subprocess, "run") as run:
+            with patch.object(doubao_work, "_run_bridge") as run:
                 run.return_value.stdout = json.dumps({"status": "completed", "tool": "doubao-creative-video", "video_file": str(video)})
                 run.return_value.returncode = 0
                 self.assertEqual(doubao_work.generate(task, str(bridge)), video)
@@ -66,7 +66,7 @@ class DoubaoWorkTests(unittest.TestCase):
             for profile, model in doubao_work.PROFILES.items():
                 self.assertEqual(server.validate_task_input("video", profile, "x", "16:9", "4", "720p", []), "doubao_work")
                 task = {"profile": profile, "prompt": " x ", "ratio": "16:9", "duration": "4", "reference_files": []}
-                with patch.object(doubao_work.subprocess, "run") as run:
+                with patch.object(doubao_work, "_run_bridge") as run:
                     run.return_value.stdout = json.dumps({"status": "completed", "tool": "doubao-creative-video", "video_file": str(video)})
                     run.return_value.returncode = 0
                     doubao_work.generate(task)

@@ -7,6 +7,7 @@ import argparse
 import fcntl
 import json
 import re
+import signal
 import sys
 import time
 from contextlib import contextmanager
@@ -62,18 +63,6 @@ def configure(page):
         raise RuntimeError('豆包未能切换到 Lite / 低，请检查网页版模型权限')
 
 
-def preflight(page):
-    configure(page)
-    page.get_by_test_id('general-agent-skill-button').click()
-    available = page.get_by_role('button', name=re.compile(r'^创意视频 '))
-    try:
-        available.wait_for(timeout=5000)
-    except Exception:
-        raise RuntimeError('当前豆包工作没有生视频工具')
-    finally:
-        page.keyboard.press('Escape')
-
-
 def response_id(page):
     responses = page.get_by_test_id('receive_message')
     if not responses.count():
@@ -82,7 +71,7 @@ def response_id(page):
 
 
 def submit(page, request):
-    preflight(page)
+    configure(page)
     editor = page.locator('[contenteditable="true"]')
     if editor.inner_text().strip():
         raise RuntimeError('豆包专用会话有未发送的内容，请先处理后重试')
@@ -169,6 +158,9 @@ def main():
     parser.add_argument('--recover', action='store_true')
     parser.add_argument('--task-id')
     args = parser.parse_args()
+    def stop(signum, frame):
+        raise SystemExit(0)
+    signal.signal(signal.SIGTERM, stop)
     from playwright.sync_api import sync_playwright
     with exclusive(), sync_playwright() as playwright:
         pending = read('pending.json')
