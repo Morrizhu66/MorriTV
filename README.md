@@ -203,3 +203,7 @@ python3 -m unittest tests.test_script_studio tests.test_script_workflows
 | `vendor/` | 本地分发的第三方前端依赖及许可证 |
 
 `app.js`、`index.html`、`style.css` 保留为旧控制台兼容入口；新产品入口是 `/canvas.html`。用户数据与密钥不进入仓库。
+
+## 豆包网页版视频
+
+新增 `seedance 2.5-db`，使用本机独立 Chrome 登录态，通过 Playwright 操作豆包工作网页。首次安装、单任务限制与断线恢复见 [连接器说明](docs/doubao-work-bridge.md)。原官方 Seedance 路径保留。

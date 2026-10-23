@@ -33,8 +33,14 @@ const MODEL_CATALOG = {
   'lingganya-gpt-image-2.5-sunburst-special': { label: 'GPT Image 2.5 · Sunburst Special', group: '灵感鸭', provider: 'lingganya', kind: 'image', accept: 'image/png,image/jpeg,image/webp', maxImages: 8, ratios: ['1:1'], resolutions: ['1K'], intro: '灵感鸭 · Sunburst Special，官方基础规格 1024×1024；多图数量由供应商校验。' },
   'seedream50-pro-ark-direct': { label: 'Seedream 5.0 Pro · 2K', provider: 'ark', kind: 'image', accept: 'image/*', maxImages: 8, ratios: [], resolutions: [], intro: '使用 Seedream 5.0 Pro 生成图片。' },
   'seedream43-ark-direct': { label: 'Seedream 4.3 · 2K', provider: 'ark', kind: 'image', accept: 'image/*', maxImages: 8, ratios: [], resolutions: [], intro: '使用 Seedream 4.3 生成图片。' },
-  'seedance-reference-video-ark-direct': { label: 'Seedance · Reference Video · 720p', provider: 'ark', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 8, maxVideos: 8, maxAudios: 8, ratios: ['9:16','16:9','1:1'], resolutions: ['720p'], duration: [15,10,5], intro: '使用 Seedance 生成带音频的视频，支持图片、视频、音频参考。' }
+  'seedance-reference-video-ark-direct': { label: 'Seedance · Reference Video · 720p', provider: 'ark', kind: 'video', accept: 'image/*,video/*,audio/*', maxImages: 8, maxVideos: 8, maxAudios: 8, ratios: ['9:16','16:9','1:1'], resolutions: ['720p'], duration: [15,10,5], intro: '使用 Seedance 生成带音频的视频，支持图片、视频、音频参考。' },
+  'seedance-2.5-db': { label: 'seedance 2.5-db', provider: 'doubao_work', kind: 'video', accept: 'image/*,video/*', maxImages: 30, maxVideos: 10, ratios: ['21:9','16:9','4:3','1:1','3:4','9:16'], resolutions: ['720p'], duration: Array.from({length:27},(_,i)=>i+4), intro: '经豆包网页版生成视频；同一时间只运行一个任务。' }
 };
+
+for (const version of ['2.0 mini', '2.0 fast', '2.0']) {
+  MODEL_CATALOG[`seedance-${version.replaceAll(' ', '-')}-db`] = {...MODEL_CATALOG['seedance-2.5-db'], label: `seedance ${version}-db`};
+}
+for (const model of Object.values(MODEL_CATALOG)) if (model.provider === 'doubao_work') model.group = '豆包 · 默认';
 
 function selectedModel() { return MODEL_CATALOG[profile.value]; }
 
@@ -72,7 +78,7 @@ async function loadUsage() {
 function renderModelOptions(kind) {
   profile.replaceChildren();
   const groups = new Map();
-  Object.entries(MODEL_CATALOG).filter(([, model]) => model.kind === kind).forEach(([value, model]) => {
+  Object.entries(MODEL_CATALOG).sort(([, a], [, b]) => Number(b.provider === "doubao_work") - Number(a.provider === "doubao_work")).filter(([, model]) => model.kind === kind).forEach(([value, model]) => {
     const groupName = model.group || (model.provider === 'ark' ? 'ARK / 方舟' : model.provider);
     if (!groups.has(groupName)) { const group = document.createElement('optgroup'); group.label = groupName; groups.set(groupName, group); profile.append(group); }
     const option = document.createElement('option'); option.value = value; option.textContent = model.label; groups.get(groupName).append(option);
@@ -98,7 +104,7 @@ function applySelectedModel() {
   document.querySelector('#dropzone').classList.remove('hidden');
   document.querySelector('#reference-preview').classList.remove('hidden');
   document.querySelector('#reference-hint').textContent = model.kind === 'video'
-    ? (model.provider === 'lingganya' ? `可选，图片最多 ${model.maxImages} 张＋视频最多 ${model.maxVideos} 条＋音频最多 ${model.maxAudios} 条` : '可选，支持图 / 视频 / 音频')
+    ? (model.provider === 'doubao_work' ? '可选，支持图片 / 视频；顺序将原样传给豆包' : model.provider === 'lingganya' ? `可选，图片最多 ${model.maxImages} 张＋视频最多 ${model.maxVideos} 条＋音频最多 ${model.maxAudios} 条` : '可选，支持图 / 视频 / 音频')
     : `可选，参考图最多 ${model.maxImages} 张`;
   state.files = state.files.filter(file => model.accept.split(',').some(pattern => file.type.startsWith(pattern.replace('/*', '/'))));
   renderReferences();
@@ -653,12 +659,12 @@ async function updateHealth() {
   try {
     const data = await (await fetch('/api/health')).json();
     const model = selectedModel();
-    const ready = model.provider === 'lingganya' ? data.lingganya_ready : (state.kind === 'video' ? data.video_ready : data.image_ready);
+    const ready = model.provider === 'doubao_work' ? data.doubao_ready : model.provider === 'lingganya' ? data.lingganya_ready : (state.kind === 'video' ? data.video_ready : data.image_ready);
     const workerCount = data.workers[state.kind];
     chip.className = `system-status ${ready ? 'ready' : 'error'}`;
     text.textContent = ready
-      ? `${model.provider === 'lingganya' ? '灵感鸭' : 'ARK'} 凭证已就绪 · ${workerCount} 个并发制作位`
-      : model.provider === 'lingganya' ? '未找到 LINGGANYA_API_KEY 配置' : (state.kind === 'video' ? '未找到 SEEDANCE_ARK_API_KEY 配置' : '未找到 ARK_API_KEY 配置');
+      ? model.provider === 'doubao_work' ? '豆包工作连接器已配置 · 单任务运行' : `${model.provider === 'lingganya' ? '灵感鸭' : 'ARK'} 凭证已就绪 · ${workerCount} 个并发制作位`
+      : model.provider === 'doubao_work' ? '豆包网页版连接器未配置' : model.provider === 'lingganya' ? '未找到 LINGGANYA_API_KEY 配置' : (state.kind === 'video' ? '未找到 SEEDANCE_ARK_API_KEY 配置' : '未找到 ARK_API_KEY 配置');
   } catch { chip.className = 'system-status error'; text.textContent = '本地服务不可用'; }
 }
 form.addEventListener('submit', async event => {
@@ -669,13 +675,13 @@ form.addEventListener('submit', async event => {
   if (model.promptLimit && prompt.length > model.promptLimit) { error.textContent = `当前模型提示词不能超过 ${model.promptLimit} 字。`; return; }
   error.textContent = '';
   const submit = document.querySelector('#submit-button'); submit.disabled = true;
-  const payload = new FormData(form); payload.set('kind', state.kind); payload.set('prompts', prompt); payload.set('folder_id', activeFolderId()); payload.delete('references'); state.files.forEach(file => payload.append('references', file));
+  const payload = new FormData(form); payload.set('kind', state.kind); payload.set('prompts', model.provider === 'doubao_work' ? prompts.value : prompt); payload.set('folder_id', activeFolderId()); payload.delete('references'); state.files.forEach(file => payload.append('references', file));
   try {
     const response = await fetch('/api/tasks', { method: 'POST', body: payload }); const data = await response.json();
     if (!response.ok || !data.ok) throw new Error(data.error || '提交失败');
     prompts.value = ''; updateBatchCount(); await Promise.all([loadTasks(), loadUsage()]);
     if (activeFolderId()) setLibraryError('任务已提交到当前收藏夹，完成后会自动出现在这里。');
-  } catch (err) { error.textContent = err.message || '提交失败，请稍后重试。'; }
+  } catch (err) { error.textContent = err.message || '提交失败，请稍后重试。'; if (err.message.includes('豆包登录工具')) notify(err.message); }
   finally { submit.disabled = false; }
 });
 document.querySelectorAll('.mode').forEach(button => button.addEventListener('click', () => { setKind(button.dataset.kind); updateHealth(); }));

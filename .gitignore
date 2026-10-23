@@ -49,3 +49,7 @@ integrations/deepseek-harness/
 
 # Local validation exports and private screenshots
 outputs/
+
+# Doubao browser login and private task state
+.doubao-web/
+.doubao-venv/
