@@ -38,7 +38,8 @@
 .node-body { position: relative; }
 .node.is-uploading { pointer-events: none; }
 .node-media { decoding: async; }
-#world { will-change: transform; }
+/* Keep text rasterized at the current canvas scale, not a cached texture. */
+#world { will-change: auto; }
 #nodes .node { contain: layout style; }
 /* The library is a compact asset browser, with reusable assets as first-class objects. */
 #library-dialog { inset: 78px auto 106px 18px; width: 402px; max-width: calc(100vw - 36px); padding: 0; border-radius: 18px; background: var(--panel); overflow: hidden; border-color: color-mix(in srgb,var(--line) 85%,var(--ink)); box-shadow: 0 20px 80px #0004; }
