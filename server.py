@@ -683,7 +683,7 @@ def validate_task_input(
         return "lingganya"
     if profile.startswith("hfsy-"):
         raise ValueError("HFSY 已移除，请选择灵感鸭或 Seedream 模型；历史素材仍可查看。")
-    if profile == doubao_work.PROFILE:
+    if profile in doubao_work.PROFILES:
         doubao_work.validate(kind, prompt, ratio, duration, references)
         return "doubao_work"
     if kind == "video" and profile != "seedance-reference-video-ark-direct":
@@ -698,8 +698,10 @@ def validate_task_input(
 def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
     kind = fields.getfirst("kind", "image")
     profile = fields.getfirst("profile", "")
+    if profile in doubao_work.PROFILES and not doubao_work.status()["ready"]:
+        raise ValueError(doubao_work.LOGIN_REQUIRED)
     submitted_prompt = fields.getfirst("prompts", "")
-    raw_prompts = submitted_prompt if profile == doubao_work.PROFILE else submitted_prompt.strip()
+    raw_prompts = submitted_prompt if profile in doubao_work.PROFILES else submitted_prompt.strip()
     prompts = [raw_prompts] if raw_prompts.strip() else []
     folder_id = str(fields.getfirst("folder_id", "") or "")
     if not MEDIA_LIBRARY.folder_exists(folder_id):
@@ -859,7 +861,7 @@ def run_task(task_id: str) -> None:
             result = {}
             image_url = video_url = ""
         elif task.get("provider") == "doubao_work":
-            source = doubao_work.generate(task, private_env_value("DOUBAO_WORK_BRIDGE"), private_env_value("DOUBAO_VIDEO_MODEL") or "seedance 2.5")
+            source = doubao_work.generate(task, private_env_value("DOUBAO_WORK_BRIDGE"))
             directory = workspace_result_dir(str(task.get("folder_id") or ""))
             directory.mkdir(parents=True, exist_ok=True)
             target = directory / f"{task_id}.mp4"
@@ -987,6 +989,8 @@ class StudioHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         path = urlparse(self.path).path
+        if path == "/api/doubao/status":
+            return self.respond_json(doubao_work.status())
         if path == "/api/script/status":
             return self.respond_json(script_studio.connection(private_env_value))
         if path == "/api/script/skills":
@@ -1179,6 +1183,14 @@ class StudioHandler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         try:
+            if path == "/api/doubao/login":
+                origin = urlparse(self.headers.get("Origin", ""))
+                if origin.netloc != self.headers.get("Host") or self.headers.get("X-MorriTV-Action") != "doubao-login":
+                    return self.respond_json({"error": "请从本机画板工具打开豆包登录"}, HTTPStatus.FORBIDDEN)
+                with LOCK:
+                    if any(t.get("provider") == "doubao_work" and t["status"] in {"queued", "running"} for t in TASKS.values()):
+                        raise ValueError("当前已有生视频任务进行中，请等结束后再登录")
+                    return self.respond_json(doubao_work.start_login())
             if path == "/api/script/settings":
                 return self.respond_json(script_studio.save_connection(self.read_json(),private_env_value))
             if path == "/api/script/attachments":

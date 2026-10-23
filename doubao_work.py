@@ -5,9 +5,16 @@ import os
 import shlex
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 PROFILE = "seedance-2.5-db"
+PROFILES = {f"seedance-{version}-db": f"seedance {version}" for version in ("2.0 mini", "2.0 fast", "2.0", "2.5")}
+PROFILES = {key.replace(" ", "-"): value for key, value in PROFILES.items()}
+LOGIN_REQUIRED = "请在工具中找到豆包登录工具，登录豆包账号后再生成"
+_LOGIN_LOCK = threading.RLock()
+_LOGIN = {"logging_in": False, "error": ""}
+
 RATIOS = {"21:9", "16:9", "4:3", "1:1", "3:4", "9:16"}
 TIMEOUT = 1920
 STATE_DIR = Path(__file__).resolve().parent / ".doubao-web"
@@ -16,6 +23,37 @@ STATE_DIR = Path(__file__).resolve().parent / ".doubao-web"
 def ready():
     return (STATE_DIR / "ready").is_file()
 
+
+def status():
+    with _LOGIN_LOCK:
+        return {**_LOGIN, "ready": ready() and not _LOGIN["logging_in"] and not _LOGIN["error"]}
+
+
+def start_login():
+    with _LOGIN_LOCK:
+        if _LOGIN["logging_in"]:
+            return status()
+        if pending_task_id():
+            raise ValueError("当前已有生视频任务进行中，请等结束后再登录")
+        _LOGIN.update(logging_in=True, error="")
+        def login():
+            try:
+                root = Path(__file__).resolve().parent
+                python = root / ".doubao-venv/bin/python"
+                result = subprocess.run([str(python) if python.exists() else sys.executable,
+                                         str(root / "doubao_web.py"), "--login"],
+                                        capture_output=True, text=True, timeout=660)
+                data = json.loads(result.stdout)
+                if result.returncode or data.get("status") != "ready":
+                    raise RuntimeError(data.get("error") or "豆包登录未完成，请重试")
+            except Exception:
+                with _LOGIN_LOCK:
+                    _LOGIN["error"] = "豆包登录未完成，请重新打开登录工具；首次使用请确认已安装网页连接器依赖"
+            finally:
+                with _LOGIN_LOCK:
+                    _LOGIN["logging_in"] = False
+        threading.Thread(target=login, daemon=True).start()
+        return status()
 
 
 def pending_task_id():
@@ -27,15 +65,15 @@ def pending_task_id():
 
 def validate(kind, prompt, ratio, duration, references):
     if kind != "video":
-        raise ValueError("seedance 2.5-db 只支持视频任务")
+        raise ValueError("Seedance -db 只支持视频任务")
     if not isinstance(prompt, str) or not prompt.strip():
         raise ValueError("请填写生视频提示词")
     if ratio not in RATIOS:
-        raise ValueError("请选择 seedance 2.5-db 支持的画幅")
+        raise ValueError("请选择 Seedance -db 支持的画幅")
     if not str(duration).isdigit() or not 4 <= int(duration) <= 30:
-        raise ValueError("seedance 2.5-db 时长必须为 4–30 秒")
+        raise ValueError("Seedance -db 时长必须为 4–30 秒")
     if any(not str(ref.get("mime", "")).startswith(("image/", "video/")) for ref in references):
-        raise ValueError("seedance 2.5-db 只接受图片和视频参考")
+        raise ValueError("Seedance -db 只接受图片和视频参考")
 
 
 def prompt_text(prompt, ratio, duration, references, video_model="seedance 2.5"):
@@ -49,8 +87,9 @@ def prompt_text(prompt, ratio, duration, references, video_model="seedance 2.5")
     )
 
 
-def generate(task, bridge_command=None, video_model="seedance 2.5"):
+def generate(task, bridge_command=None, video_model=None):
     """Return a local MP4 path from a configured agent bridge."""
+    video_model = video_model or PROFILES[task.get("profile", PROFILE)]
     command = bridge_command if bridge_command is not None else os.getenv("DOUBAO_WORK_BRIDGE", "")
     argv = shlex.split(command) if command.strip() else [str(Path(__file__).resolve().parent / ".doubao-venv/bin/python") if (Path(__file__).resolve().parent / ".doubao-venv/bin/python").exists() else sys.executable, str(Path(__file__).resolve().parent / "doubao_web.py")]
     if not argv or not Path(argv[0]).is_file():

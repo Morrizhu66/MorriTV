@@ -145,6 +145,11 @@ const MODELS = {
     hint: "4–30 秒；经豆包网页版生成",
   },
 };
+const DOUBAO_PROFILES = ["seedance-2.5-db", "seedance-2.0-mini-db", "seedance-2.0-fast-db", "seedance-2.0-db"];
+for (const version of ["2.0 mini", "2.0 fast", "2.0"]) {
+  MODELS[`seedance-${version.replaceAll(" ", "-")}-db`] = {...MODELS["seedance-2.5-db"], name: `seedance ${version}-db`};
+}
+const DOUBAO_LOGIN_MESSAGE = "请在工具中找到豆包登录工具，登录豆包账号后再生成";
 MODELS["lingganya-gpt-image-2.5-sunburst"] = {...MODELS["lingganya-gpt-image-2.5-sunburst-special"], name: "GPT Image 2.5 · Sunburst"};
 MODELS["lingganya-gpt-image-2-special"] = {...MODELS["lingganya-gpt-image-2.5-sunburst-special"], name: "GPT Image 2 · Special", ratios: ["adaptive", "1:1", "16:9", "9:16"]};
 MODELS["lingganya-sd-2.5-px-vip"] = {name:"SD 2.5 · PX VIP",kind:"video",ratios:["adaptive","16:9","9:16","4:3","3:4","1:1","21:9"],resolutions:["720p","1080p","480p"],durations:Array.from({length:26},(_,i)=>i+5),images:30,videos:10,hint:"5–30 秒"};
@@ -463,7 +468,7 @@ function createNode(type, position = centerPoint(), overrides = {}, defer = fals
   )
     position.x += 430;
   if (!defer) checkpoint();
-  const profile = Object.keys(MODELS).find((k) => MODELS[k].kind === type);
+  const profile = type === "video" ? "seedance-2.5-db" : Object.keys(MODELS).find((k) => MODELS[k].kind === type);
   const m = MODELS[profile];
   const n = {
     id: uid(),
@@ -760,6 +765,7 @@ function buildGenerationEditor(n, expanded = false) {
       const params = make("div", "params");
       const model = selector(
         Object.entries(MODELS)
+          .sort(([a], [b]) => Number(DOUBAO_PROFILES.includes(b)) - Number(DOUBAO_PROFILES.includes(a)))
           .filter(([, m]) => m.kind === n.type)
           .map(([key, m]) => [key, m.name]),
         n.profile,
@@ -1677,6 +1683,7 @@ async function submitNode(n) {
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   try { await submitNodeRequest(n); }
   catch (error) {
+    if (error.message.includes("豆包登录工具")) { toast(error.message); return; }
     submissionErrors.set(n.id, {id:"local-"+n.id, node_id:n.id, board_id:submittingBoard, reference_bindings:clone(n.refs || []), ratio:n.ratio, resolution:n.resolution, duration:n.duration, kind:n.type, profile:n.profile, prompt:n.prompt, status:"failed", error:error.message || String(error), created_at:Date.now()/1000});
     renderTaskList(); if (!$("#task-dialog").open) $("#task-dialog").showModal();
   } finally { pending.delete(n.id); render(); }
@@ -1700,6 +1707,7 @@ function providerReferencePrompt(prompt, refs) {
   return result;
 }
 async function submitNodeRequest(n) {
+  if (DOUBAO_PROFILES.includes(n.profile) && !(await api("/api/doubao/status")).ready) throw new Error(DOUBAO_LOGIN_MESSAGE);
   if (resolvePendingReferences(board().nodes)) touch();
   const bad = compatibility(n);
   if (bad) throw new Error(bad);
@@ -1741,7 +1749,7 @@ async function submitNodeRequest(n) {
     form.set("submission_id", submissionId);
     form.set("reference_bindings", JSON.stringify(refs));
     const replayPrompt = n.replay?.displayPrompt === snapshot.prompt && JSON.stringify(n.replay?.refs) === JSON.stringify(snapshot.refs) ? n.replay.prompt : null;
-    const prompt = snapshot.profile === "seedance-2.5-db"
+    const prompt = DOUBAO_PROFILES.includes(snapshot.profile)
       ? snapshot.prompt
       : (replayPrompt ?? providerReferencePrompt(snapshot.prompt, refs));
     let imageIndex = 0,
@@ -3925,3 +3933,21 @@ async function openRecycleBin(){
 }
 
 $("#preview-dialog").addEventListener("close",()=>$("#preview-content").querySelectorAll("video").forEach(v=>v.pause()));
+
+$("#doubao-login").onclick = async () => {
+  const button = $("#doubao-login");
+  const menu = button.closest("details");
+  if (menu) menu.open = false;
+  button.disabled = true;
+  try {
+    await api("/api/doubao/login", {method: "POST", headers: {"X-MorriTV-Action": "doubao-login"}});
+    toast("已打开豆包专用窗口，请登录账号并进入工作页面");
+    let state;
+    do {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      state = await api("/api/doubao/status");
+    } while (state.logging_in);
+    toast(state.error || (state.ready ? "豆包账号已登录，可以生成视频了" : DOUBAO_LOGIN_MESSAGE));
+  } catch (error) { toast(error.message); }
+  finally { button.disabled = false; }
+};

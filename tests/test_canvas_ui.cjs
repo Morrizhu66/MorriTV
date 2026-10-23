@@ -204,7 +204,7 @@ test('provider submission maps reordered mentions once and respects numeric boun
     {kind:'image',name:'图片2',url:'/media/a.png',role:'人物'},
     {kind:'image',name:'图片1',url:'/media/b.png',role:'衣服'},
     {kind:'text',name:'故事',text:'@图片1 不应被替换'}]};
-  const c=vm.createContext({resolvePendingReferences:()=>false,board:()=>({nodes:[n]}),compatibility:()=>'',pending:new Set(),clone:structuredClone,uid:()=> 'submission',boardId:'b',touch(){},saving:false,save:async()=>{},dirty:false,render(){},FormData,
+  const c=vm.createContext({DOUBAO_PROFILES:["seedance-2.5-db","seedance-2.0-mini-db","seedance-2.0-fast-db","seedance-2.0-db"],resolvePendingReferences:()=>false,board:()=>({nodes:[n]}),compatibility:()=>'',pending:new Set(),clone:structuredClone,uid:()=> 'submission',boardId:'b',touch(){},saving:false,save:async()=>{},dirty:false,render(){},FormData,
     fetch:async()=>({ok:true,blob:async()=>new Blob(['x'],{type:'image/png'})}),mediaURL:r=>r.url,
     api:async(u,o)=>{form=o.body;return {tasks:[{id:'t'}]};},tasks:[],rebuildTaskIndex(){},toast(){},poll:async()=>{}});
   vm.runInContext(section('function providerReferencePrompt(', 'async function resumeTask('),c);
@@ -233,4 +233,11 @@ test('image mentions prioritize connected sources without renumbering images',()
  vm.runInContext(section('function imageMentionCandidates(', 'function drawEdges('),c);
  const items=c.imageMentionCandidates({id:'target',refs:[{nodeId:'c'}]});
  assert.equal(items[0].id,'c');assert.equal(items[0].name,'图片3');assert.equal(items[1].id,'a');
+});
+
+test('logged-out Doubao submission stops before save or upload', async () => {
+  const profiles = ['seedance-2.5-db','seedance-2.0-mini-db','seedance-2.0-fast-db','seedance-2.0-db'];
+  const c = vm.createContext({DOUBAO_PROFILES:profiles, DOUBAO_LOGIN_MESSAGE:'请在工具中找到豆包登录工具', api:async url=>{assert.equal(url,'/api/doubao/status');return {ready:false};}});
+  vm.runInContext(section('async function submitNodeRequest(', 'async function resumeTask('), c);
+  for (const profile of profiles) await assert.rejects(c.submitNodeRequest({profile}), /豆包登录工具/);
 });

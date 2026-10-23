@@ -1,10 +1,10 @@
-# seedance 2.5-db：豆包网页版连接器
+# Seedance -db：豆包网页版连接器
 
 ## 运行方式
 
 画板 → MorriTV 后端 → 本机 Playwright / Chrome → 豆包工作网页 → 下载 MP4 → 原生成任务与节点。
 
-新增入口 `seedance 2.5-db`，默认工具模型 `seedance 2.5`。原官方 Seedance 分支不变。网页操作代码在 `doubao_web.py`，参数与结果适配在 `doubao_work.py`。
+默认视频模型组为 `seedance 2.0 mini-db`、`seedance 2.0 fast-db`、`seedance 2.0-db`、`seedance 2.5-db`；新节点默认选 2.5。每个入口传递对应的工具模型。原官方 Seedance 分支不变。网页操作代码在 `doubao_web.py`，参数与结果适配在 `doubao_work.py`。
 
 ### 首次设置（macOS / Linux，需要已安装 Google Chrome）
 
@@ -13,16 +13,18 @@
 ```sh
 python3 -m venv .doubao-venv
 .doubao-venv/bin/pip install -r requirements.txt -r requirements-doubao.txt
-.doubao-venv/bin/python doubao_web.py --login
 ```
 
-在打开的独立 Chrome 窗口登录豆包并进入「工作」。连接器核对 Lite、低推理和创意视频入口后结束设置。登录状态在 `.doubao-web/profile/`，不复制日常 Chrome 的 cookies。该目录、运行日志和依赖目录均被 Git 忽略。
+启动 MorriTV 后，在画板「工具 → 豆包账号登录」打开独立 Chrome 窗口，登录豆包并进入「工作」。连接器核对 Lite、低推理和创意视频入口后结束设置。登录状态在 `.doubao-web/profile/`，不复制日常 Chrome 的 cookies。该目录、运行日志和依赖目录均被 Git 忽略。
 
 然后照常启动 MorriTV。其原有云存储配置仍是画板保存的前提。连接器优先使用 `.doubao-venv/bin/python`，没有该虚拟环境时使用服务器的 Python。
 
-`DOUBAO_WORK_BRIDGE` 可留空，默认使用内置网页连接器；仅需要自定义适配程序时填写绝对命令。`.env` 中可用 `DOUBAO_VIDEO_MODEL=seedance 2.0 mini` 做低成本测试；正式默认仍是 `seedance 2.5`。
+`DOUBAO_WORK_BRIDGE` 可留空，默认使用内置网页连接器；仅需要自定义适配程序时填写绝对命令。工具模型按所选 `-db` 入口映射，旧的 `DOUBAO_VIDEO_MODEL` 环境变量不再生效。
 
 ## 行为
+
+- 未完成登录时，生成操作弹出“请在工具中找到豆包登录工具”，后端在复制素材和创建任务前拒绝提交。会话过期时，网页发送前检查会清除登录标记并提示重新登录。
+- 登录过程不发送消息；多个点击复用同一登录过程，生成进行中不能重新打开登录窗口。
 
 - 4–30 秒整数、六种画幅、图片/视频参考；有视频自动写视频生视频，无视频写图生视频。
 - 用户提示词保留原文；附件按画板参考顺序逐个上传，等待附件就绪后发送。
@@ -53,3 +55,5 @@ python3 -m venv .doubao-venv
 正式默认与本机测试配置均已恢复为 Seedance 2.5；未额外提交 2.5 回填测试。因此真实自动回填证据来自 Mini，2.5 的证据仅为前述网页链路。Python 15 项定向测试及画板 UI 23 项测试通过；官方 Seedance 仅检查原分支与路由保持，未发起收费回归。
 
 截图与视频为本地验收输出，不提交仓库。
+
+四模型与登录入口更新：18 项 Python 定向测试、24 项画板 UI 测试通过。已在界面核对四个模型置顶、新节点默认 2.5；点击登录工具成功拉起专用 Chrome，并回报登录完成。没有为新模型重复提交收费生成。

@@ -45,7 +45,8 @@ class DoubaoWorkTests(unittest.TestCase):
             with patch.object(server, "TASKS", {}), patch.object(server, "UPLOADS_DIR", root / "uploads"), \
                  patch.object(server, "HISTORY_FILE", root / "history.jsonl"), \
                  patch.object(server.DOUBAO_EXECUTOR, "submit") as submit, \
-                 patch.object(doubao_work, "pending_task_id", return_value=""):
+                 patch.object(doubao_work, "pending_task_id", return_value=""), \
+                 patch.object(doubao_work, "status", return_value={"ready": True}):
                 first = server.create_tasks(fields)[0]
                 second = server.create_tasks(fields)[0]
                 self.assertEqual(first["status"], "queued")
@@ -57,6 +58,39 @@ class DoubaoWorkTests(unittest.TestCase):
     def test_formal_model_default_is_25_and_mini_is_explicit(self):
         self.assertIn("模型：seedance 2.5", doubao_work.prompt_text("x", "16:9", "4", []))
         self.assertIn("模型：seedance 2.0 mini", doubao_work.prompt_text("x", "16:9", "4", [], "seedance 2.0 mini"))
+
+    def test_all_models_use_their_own_tool_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            video = Path(directory) / "output.mp4"
+            video.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+            for profile, model in doubao_work.PROFILES.items():
+                self.assertEqual(server.validate_task_input("video", profile, "x", "16:9", "4", "720p", []), "doubao_work")
+                task = {"profile": profile, "prompt": " x ", "ratio": "16:9", "duration": "4", "reference_files": []}
+                with patch.object(doubao_work.subprocess, "run") as run:
+                    run.return_value.stdout = json.dumps({"status": "completed", "tool": "doubao-creative-video", "video_file": str(video)})
+                    run.return_value.returncode = 0
+                    doubao_work.generate(task)
+                    request = json.loads(run.call_args.kwargs["input"])
+                    self.assertIn(f"模型：{model}\n", request["prompt"])
+                    self.assertTrue(request["prompt"].endswith("[ x ]"))
+
+    def test_logged_out_rejected_before_upload_or_task_creation(self):
+        with patch.object(doubao_work, "status", return_value={"ready": False}), \
+             patch.object(server, "TASKS", {}), patch.object(server, "copy_references") as copy, \
+             patch.object(server.DOUBAO_EXECUTOR, "submit") as submit:
+            for profile in doubao_work.PROFILES:
+                with self.assertRaisesRegex(ValueError, "豆包登录工具"):
+                    server.create_tasks(Fields(kind="video", profile=profile, prompts="x"))
+            copy.assert_not_called()
+            submit.assert_not_called()
+            self.assertEqual(server.TASKS, {})
+
+    def test_login_running_is_not_ready_and_duplicate_open_is_ignored(self):
+        with patch.object(doubao_work, "_LOGIN", {"logging_in": True, "error": ""}), \
+             patch.object(doubao_work, "ready", return_value=True), \
+             patch.object(doubao_work.threading, "Thread") as thread:
+            self.assertFalse(doubao_work.start_login()["ready"])
+            thread.assert_not_called()
 
     def test_durable_pending_and_process_lock(self):
         with tempfile.TemporaryDirectory() as directory:

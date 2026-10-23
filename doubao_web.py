@@ -47,7 +47,8 @@ def configure(page):
     try:
         model.wait_for(timeout=20000)
     except Exception as exc:
-        raise RuntimeError("没找到已登录的豆包工作网页，请先打开专用窗口登录") from exc
+        (ROOT / "ready").unlink(missing_ok=True)
+        raise RuntimeError("请在工具中找到豆包登录工具，登录豆包账号后再生成") from exc
     if 'Lite' not in model.inner_text():
         model.click()
         page.get_by_role('menuitem', name=re.compile(r'^豆包 2\.1 Lite')).click()
@@ -183,11 +184,12 @@ def main():
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.set_default_timeout(20000)
-            url = pending['url'] if args.recover else read('session.json', {'url': HOME})['url']
+            url = HOME if args.login else (pending['url'] if args.recover else read('session.json', {'url': HOME})['url'])
             if not re.fullmatch(r'https://www\.doubao\.com/chat/(?:\d+)?', url):
                 raise RuntimeError('豆包会话地址无效')
             page.goto(url, wait_until='domcontentloaded')
             if args.login:
+                (ROOT / "ready").unlink(missing_ok=True)
                 page.get_by_test_id('general-agent-skill-button').wait_for(timeout=600000)
                 preflight(page)
                 (ROOT / 'ready').write_text('ready\n')

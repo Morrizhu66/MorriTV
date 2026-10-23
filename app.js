@@ -37,6 +37,11 @@ const MODEL_CATALOG = {
   'seedance-2.5-db': { label: 'seedance 2.5-db', provider: 'doubao_work', kind: 'video', accept: 'image/*,video/*', maxImages: 30, maxVideos: 10, ratios: ['21:9','16:9','4:3','1:1','3:4','9:16'], resolutions: ['720p'], duration: Array.from({length:27},(_,i)=>i+4), intro: '经豆包网页版生成视频；同一时间只运行一个任务。' }
 };
 
+for (const version of ['2.0 mini', '2.0 fast', '2.0']) {
+  MODEL_CATALOG[`seedance-${version.replaceAll(' ', '-')}-db`] = {...MODEL_CATALOG['seedance-2.5-db'], label: `seedance ${version}-db`};
+}
+for (const model of Object.values(MODEL_CATALOG)) if (model.provider === 'doubao_work') model.group = '豆包 · 默认';
+
 function selectedModel() { return MODEL_CATALOG[profile.value]; }
 
 function loadTaskVideoPreview(video, source) {
@@ -73,7 +78,7 @@ async function loadUsage() {
 function renderModelOptions(kind) {
   profile.replaceChildren();
   const groups = new Map();
-  Object.entries(MODEL_CATALOG).filter(([, model]) => model.kind === kind).forEach(([value, model]) => {
+  Object.entries(MODEL_CATALOG).sort(([, a], [, b]) => Number(b.provider === "doubao_work") - Number(a.provider === "doubao_work")).filter(([, model]) => model.kind === kind).forEach(([value, model]) => {
     const groupName = model.group || (model.provider === 'ark' ? 'ARK / 方舟' : model.provider);
     if (!groups.has(groupName)) { const group = document.createElement('optgroup'); group.label = groupName; groups.set(groupName, group); profile.append(group); }
     const option = document.createElement('option'); option.value = value; option.textContent = model.label; groups.get(groupName).append(option);
@@ -676,7 +681,7 @@ form.addEventListener('submit', async event => {
     if (!response.ok || !data.ok) throw new Error(data.error || '提交失败');
     prompts.value = ''; updateBatchCount(); await Promise.all([loadTasks(), loadUsage()]);
     if (activeFolderId()) setLibraryError('任务已提交到当前收藏夹，完成后会自动出现在这里。');
-  } catch (err) { error.textContent = err.message || '提交失败，请稍后重试。'; }
+  } catch (err) { error.textContent = err.message || '提交失败，请稍后重试。'; if (err.message.includes('豆包登录工具')) notify(err.message); }
   finally { submit.disabled = false; }
 });
 document.querySelectorAll('.mode').forEach(button => button.addEventListener('click', () => { setKind(button.dataset.kind); updateHealth(); }));
