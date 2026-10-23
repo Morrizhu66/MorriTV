@@ -1104,6 +1104,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
                         raise ValueError("Cloud storage did not honor Range")
                     self.send_response(HTTPStatus.PARTIAL_CONTENT if byte_range else HTTPStatus.OK)
                     self.send_header("Content-Type", info["mime"])
+                    if thumbnail:self.send_header("Cache-Control", "private, max-age=300")
                     self.send_header("Content-Length", str(byte_range[1] - byte_range[0] + 1 if byte_range else size))
                     self.send_header("Accept-Ranges", "bytes")
                     if byte_range:
@@ -1132,6 +1133,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
         self.send_header("Accept-Ranges", "bytes")
         if byte_range:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        if thumbnail:self.send_header("Cache-Control", "private, max-age=300")
         self.send_header("Content-Length", str(content_length))
         self.end_headers()
         with target.open("rb") as file:
