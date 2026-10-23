@@ -2172,3 +2172,14 @@ dialog footer {
 .node.group-node {
   z-index: -1;
 }
+
+/* Cloud storage reading guide */
+#cloud-guide-dialog { width: min(480px, calc(100vw - 40px)); }
+.cloud-guide-copy { padding: 8px 4px 12px; line-height: 1.8; font-size: 14px; }
+.cloud-guide-copy p { margin: 0 0 18px; }
+.cloud-guide-copy .cloud-guide-lead { font-size: 21px; font-weight: 600; letter-spacing: -.5px; margin-top: 8px; }
+.cloud-guide-note { color: var(--muted); font-size: 12px; }
+.cloud-guide-link { display: block; padding: 16px 18px; border: 1px solid var(--muted); border-radius: 12px; color: inherit; text-decoration: none; }
+.cloud-guide-link:hover { background: #8881; }
+.cloud-guide-link span { float: right; }
+.cloud-guide-link small { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
