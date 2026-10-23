@@ -11,3 +11,14 @@ test('references use exact image variables, deduplicate and exclude numeric pref
  assert.equal(refs('未引用图片1',candidates).length,0);
  assert.equal(refs('@图片1和@图片10',candidates).length,2);
 });
+
+const textNode=value=>({nodeType:3,textContent:value});
+const element=(tag,...children)=>({nodeType:1,tagName:tag,childNodes:children});
+test('editor serialization retains pasted paragraphs, blank lines and inline mentions',()=>{
+ const root=element('DIV',textNode('第一段'),element('DIV',element('BR')),element('DIV',textNode('第二段'),element('SPAN',textNode('@图片1')),textNode(' 后文')));
+ assert.equal(context.window.RichPrompt.readText(root),'第一段\n\n第二段@图片1 后文');
+});
+test('editor serialization keeps literal newlines and trailing empty paragraphs',()=>{
+ assert.equal(context.window.RichPrompt.readText(element('DIV',textNode('a\nb'),element('DIV',element('BR')))),'a\nb\n');
+ assert.equal(context.window.RichPrompt.readText(element('DIV',textNode('a'),element('BR'),textNode('b'))),'a\nb');
+});

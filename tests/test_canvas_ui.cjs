@@ -234,3 +234,16 @@ test('image mentions prioritize connected sources without renumbering images',()
  const items=c.imageMentionCandidates({id:'target',refs:[{nodeId:'c'}]});
  assert.equal(items[0].id,'c');assert.equal(items[0].name,'图片3');assert.equal(items[1].id,'a');
 });
+
+test('reference refresh retains the live prompt, caret and scrolled position',()=>{
+ const editor={scrollTop:350},calls=[];
+ const rich={editor,caret:()=>72,sync:value=>calls.push(['sync',value]),restore:offset=>{calls.push(['restore',offset]);editor.scrollTop=0;}};
+ const input={_rich:rich,after:el=>assert.equal(el,editor)};
+ const replacement={_rich:{destroy:()=>calls.push(['destroy'])},replaceWith:el=>assert.equal(el,input)};
+ const c=vm.createContext({document:{activeElement:editor}});
+ vm.runInContext(section('function retainPrompt(', 'function renderNodes('),c);
+ const restore=c.retainPrompt({querySelector:()=>input},{querySelector:()=>replacement},{prompt:'第一段\n@图片1 第二段'});
+ restore();
+ assert.deepEqual(calls,[['destroy'],['sync','第一段\n@图片1 第二段'],['restore',72]]);
+ assert.equal(editor.scrollTop,350);
+});

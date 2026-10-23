@@ -378,6 +378,24 @@ function renderNavigation() {
     : "";
 }
 function hiddenNode(n) { return hiddenNodes.has(n.id); }
+// Reuse the live composer when only references/status changed. Recreating it
+// loses selection, scroll and native editing state on every image add/remove.
+function retainPrompt(old, next, n) {
+  const input=old?.querySelector('textarea'), replacement=next.querySelector('textarea');
+  if(!input || !replacement)return ()=>{};
+  if(!input._rich || !replacement._rich){
+    const focused=document.activeElement===input;
+    const start=input.selectionStart,end=input.selectionEnd,scroll=input.scrollTop;
+    return ()=>{if(focused){replacement.focus({preventScroll:true});replacement.setSelectionRange(start,end);}replacement.scrollTop=scroll;};
+  }
+  const rich=input._rich, focused=document.activeElement===rich.editor;
+  const offset=rich.caret(), scroll=rich.editor.scrollTop;
+  replacement._rich.destroy();
+  replacement.replaceWith(input);
+  input.after(rich.editor);
+  rich.sync(n.prompt);
+  return ()=>{if(focused)rich.restore(offset);rich.editor.scrollTop=scroll;};
+}
 function renderNodes() {
   indexBoard();
   const root = $("#nodes"), existing = new Map([...root.children].map(el => [el.dataset.id, el]));
@@ -388,6 +406,7 @@ function renderNodes() {
     let el = old;
     if (!old || old._node !== n || old.dataset.signature !== signature) {
       el = renderNode(n);
+      const restorePrompt=old?._node===n ? retainPrompt(old,el,n) : ()=>{};
       // Retain the running loader across submit/queued/running updates.
       const oldLoader=old?.querySelector('.generation-overlay'), nextLoader=el.querySelector('.generation-overlay');
       if(oldLoader && nextLoader){
@@ -395,6 +414,7 @@ function renderNodes() {
         nextLoader.replaceWith(oldLoader);
       }
       if (old) { old.querySelectorAll("video").forEach(media => nodeMediaObserver.unobserve(media)); old.replaceWith(el); }
+      restorePrompt();
       if (slot === old) slot = el;
     }
     el.style.left = n.x + "px"; el.style.top = n.y + "px";
@@ -594,11 +614,10 @@ function refreshExpandedEditor() {
   if (!n || state.board !== boardId) return closeExpandedEditor(true);
   const signature = nodeSignature(n);
   if (state.signature === signature) return;
-  const old = state.host.querySelector("textarea"), focused = old === document.activeElement;
-  if (state.host.querySelector(".rich-prompt")?.contains(document.activeElement)) return;
-  const selection = old && [old.selectionStart,old.selectionEnd,old.scrollTop];
-  state.host.replaceChildren(buildGenerationEditor(n,true));state.signature=signature;
-  if(focused){const input=state.host.querySelector("textarea");input.focus({preventScroll:true});input.setSelectionRange(selection[0],selection[1]);input.scrollTop=selection[2];}
+  const next=buildGenerationEditor(n,true);
+  const restore=retainPrompt(state.host,next,n);
+  state.host.replaceChildren(next);state.signature=signature;
+  restore();
 }
 function closeExpandedEditor(immediate = false) {
   const state = expandedEditor;
@@ -663,17 +682,7 @@ function buildGenerationEditor(n, expanded = false) {
     }
     editor.append(prompt);
     if(n.type!=="text"){
-      const refreshReferences = () => requestAnimationFrame(() => {
-        const offset = prompt._rich?.caret() ?? n.prompt.length;
-        const focused = document.activeElement === prompt._rich?.editor;
-        if(expandedEditor?.id===n.id){expandedEditor.signature=null;prompt._rich?.editor.blur();}
-        render();
-        if (focused) {
-          const scope = expandedEditor?.id===n.id ? expandedEditor.host : document;
-          const next = [...scope.querySelectorAll('textarea')].find(t => t.getAttribute('aria-label') === n.name + ' 提示词' && t._rich);
-          next?._rich.restore(offset);
-        }
-      });
+      const refreshReferences = () => requestAnimationFrame(() => render());
       const rich=RichPrompt.mount(prompt,{
         candidates:()=>imageMentionCandidates(n),
         onPick:c=>{if(!n.refs.some(r=>r.nodeId===c.id))n.refs.push({...binding(node(c.id)),name:c.name});refreshReferences();},
