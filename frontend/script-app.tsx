@@ -53,7 +53,7 @@ function App(){
  const [status,setStatus]=useState<any>({}),[key,setKey]=useState(''),[notice,setNotice]=useState(''),[busy,setBusy]=useState(false),[prompt,setPrompt]=useState(''),[saving,setSaving]=useState(false);
  const [session,setSession]=useState(''),[fresh,setFresh]=useState(false),[history,setHistory]=useState<Conversation[]>([]),[historyLoading,setHistoryLoading]=useState(false);
  const [boardImages,setBoardImages]=useState<{id:string,name:string,url:string}[]>([]);
- useEffect(()=>{const receive=(e:MessageEvent)=>{if(e.origin===location.origin&&e.source===parent&&e.data?.type==='script-board-images')setBoardImages(e.data.images||[]);};window.addEventListener('message',receive);const request=()=>parent.postMessage({type:'script-board-images'},location.origin);request();window.addEventListener('focus',request);return()=>{window.removeEventListener('message',receive);window.removeEventListener('focus',request);};},[]);
+ useEffect(()=>{const receive=(e:MessageEvent)=>{if(e.origin===location.origin&&e.source===parent&&e.data?.type==='script-board-images')setBoardImages(e.data.images||[]);};window.addEventListener('message',receive);const request=()=>parent.postMessage({type:'script-board-images'},location.origin);request();const timer=window.setInterval(request,2000);window.addEventListener('focus',request);return()=>{window.clearInterval(timer);window.removeEventListener('message',receive);window.removeEventListener('focus',request);};},[]);
  const [effort,setEffort]=useState<Effort>('high');
  const [attachments,setAttachments]=useState<Attachment[]>([]),[uploading,setUploading]=useState(false),[installAttachments,setInstallAttachments]=useState<Attachment[]>([]);
  const [installText,setInstallText]=useState(''),[skillName,setSkillName]=useState(''),[installJob,setInstallJob]=useState<any>(null),[installMode,setInstallMode]=useState<'file'|'text'>('file');
@@ -99,7 +99,7 @@ function App(){
   setTurns(list=>[...list,{id:pending+'-user',role:'user',text:value,skills:names,attachments},{id:pending,role:'assistant',text:'',status:'starting',created_at:Date.now()/1000}]);
   try{
    const referenced=[];
-   for(const image of boardImages.filter(i=>value.includes('@'+i.name))){
+   for(const image of (window as any).RichPrompt.references(value,boardImages)){
     const url=new URL(image.url,location.href);if(url.origin!==location.origin)throw Error('画板图片需要先保存到本地再引用');
     const response=await fetch(url);if(!response.ok)throw Error('引用图片读取失败');
     const bytes=new Uint8Array(await response.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));

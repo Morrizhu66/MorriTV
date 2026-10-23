@@ -96,3 +96,15 @@ textarea[hidden]{display:none!important}
 *:focus,*:focus-visible{outline:none!important;}
 :is(input,textarea,select,[contenteditable="true"],[role="textbox"]):focus{box-shadow:none!important;--tw-ring-shadow:0 0 #0000;--tw-ring-offset-shadow:0 0 #0000;}
 :is(button,a,summary,[role="button"],[role="menuitem"]):focus-visible{background-color:var(--raised,var(--color-muted));}
+
+/* Shared atomic image-reference surface, sized independently of source images. */
+form .rich-prompt{white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;line-height:2;outline:none;cursor:text;user-select:text;min-width:0;width:100%;}
+.rich-prompt:empty:before{content:attr(data-placeholder);color:var(--color-muted-foreground);pointer-events:none}
+.prompt-mention{display:inline-flex;align-items:center;vertical-align:middle;gap:5px;padding:2px 7px;margin:0 2px;border-radius:8px;background:var(--color-muted);white-space:nowrap;font-size:.9em;user-select:all;}
+.prompt-mention img{width:25px;height:25px;object-fit:cover;border-radius:5px;flex-shrink:0}
+.rich-mentions{position:absolute;z-index:50;background:var(--color-background);color:var(--color-foreground);border:1px solid var(--color-border);border-radius:12px;padding:5px;max-height:230px;overflow:auto;box-shadow:0 12px 40px #0003}
+.rich-mentions[hidden]{display:none!important}
+.rich-mentions button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;padding:8px;border-radius:8px;background:none;color:inherit}
+.rich-mentions button:hover,.rich-mentions button:focus{background:var(--color-muted)}
+.rich-mentions img{width:36px;height:36px;object-fit:cover;border-radius:6px;flex-shrink:0}
+form textarea[hidden]{display:none!important}

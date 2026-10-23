@@ -139,11 +139,13 @@ export function PromptInput({
 
   const richRef=useRef<any>(null),mentionsRef=useRef(mentionCandidates);
   mentionsRef.current=mentionCandidates;
+  const submitRef=useRef<(text:string)=>void>(()=>{});
+  submitRef.current=(text)=>{if(!disabled&&!loading&&(text.trim()||allowEmptySubmit)){onSubmit?.(text.trim(),currentModelValue);if(value===undefined)setInternalValue("");}};
   useEffect(()=>{
     if(!mentionCandidates||!textareaRef.current)return;
     const input=textareaRef.current;
-    richRef.current=(window as any).RichPrompt.mount(input,{candidates:()=>mentionsRef.current||[]});
-    const changed=()=>onValueChange?.(input.value);
+    richRef.current=(window as any).RichPrompt.mount(input,{candidates:()=>mentionsRef.current||[],onSubmit:(text:string)=>submitRef.current(text)});
+    const changed=()=>{setInternalValue(input.value);onValueChange?.(input.value);};
     input.addEventListener('input',changed);
     return()=>{input.removeEventListener('input',changed);richRef.current?.destroy();richRef.current=null;};
   },[!!mentionCandidates]);
