@@ -209,11 +209,11 @@ test('provider submission maps reordered mentions once and respects numeric boun
     api:async(u,o)=>{form=o.body;return {tasks:[{id:'t'}]};},tasks:[],rebuildTaskIndex(){},toast(){},poll:async()=>{}});
   vm.runInContext(section('function providerReferencePrompt(', 'async function resumeTask('),c);
   await c.submitNodeRequest(n);
-  assert.equal(form.get('prompts'),'@图片1 穿着 @图片2 的衣服，保留 @图片10\n故事：@图片1 不应被替换\n图片1：图片2，用途：人物。\n图片2：图片1，用途：衣服。');
+  assert.equal(form.get('prompts'),'@图片1 穿着 @图片2 的衣服，保留 @图片10\n故事：@图片1 不应被替换');
   assert.equal(form.getAll('references').length,2);
   n.replay={displayPrompt:n.prompt,refs:structuredClone(n.refs),prompt:'精确重放 @图片2'};
   await c.submitNodeRequest(n);
-  assert.equal(form.get('prompts'),'精确重放 @图片2');
+  assert.equal(form.get('prompts'),'@图片1 穿着 @图片2 的衣服，保留 @图片10\n故事：@图片1 不应被替换');
 });
 
 test('poll recovers results oldest first and does not replace a selection with a late older run', async () => {

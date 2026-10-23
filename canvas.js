@@ -1703,7 +1703,6 @@ function providerReferencePrompt(prompt, refs) {
     else result += prompt[i++];
   }
   for (const ref of refs.filter(r => r.kind === "text")) result += "\n" + ref.name + "：" + ref.text;
-  for (const {ref, label} of media) result += `\n${label}：${ref.name}，用途：${ref.role}。`;
   return result;
 }
 async function submitNodeRequest(n) {
@@ -1748,10 +1747,9 @@ async function submitNodeRequest(n) {
     form.set("node_id", n.id);
     form.set("submission_id", submissionId);
     form.set("reference_bindings", JSON.stringify(refs));
-    const replayPrompt = n.replay?.displayPrompt === snapshot.prompt && JSON.stringify(n.replay?.refs) === JSON.stringify(snapshot.refs) ? n.replay.prompt : null;
     const prompt = DOUBAO_PROFILES.includes(snapshot.profile)
       ? snapshot.prompt
-      : (replayPrompt ?? providerReferencePrompt(snapshot.prompt, refs));
+      : providerReferencePrompt(snapshot.prompt, refs);
     let imageIndex = 0,
       videoIndex = 0;
     for (const ref of refs) {
