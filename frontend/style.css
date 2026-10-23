@@ -108,3 +108,10 @@ form .rich-prompt{white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto;line
 .rich-mentions button:hover,.rich-mentions button:focus{background:var(--color-muted)}
 .rich-mentions img{width:36px;height:36px;object-fit:cover;border-radius:6px;flex-shrink:0}
 form textarea[hidden]{display:none!important}
+
+.ui-popup { position: fixed; inset: auto; top: 0; left: 0; margin: 0; padding: 5px; min-width: 208px; max-width: min(380px,calc(100vw - 24px)); max-height: min(450px,calc(100dvh - 24px)); overflow: auto; overscroll-behavior: contain; border: 1px solid color-mix(in srgb,var(--line,var(--color-border)) 80%,var(--ink,var(--color-foreground))); border-radius: 12px; background: var(--panel,var(--color-background)); color: var(--ink,var(--color-foreground)); box-shadow: 0 14px 44px #0005,0 2px 6px #0002; z-index: 300; visibility: hidden; font-size: 12px; outline: none; }
+.ui-popup::backdrop { background: transparent; pointer-events: none; }
+.ui-popup .ui-menu-item { display: flex; align-items: center; gap: 9px; width: 100%; border: 0; padding: 10px 9px; text-align: left; border-radius: 7px; background: transparent; line-height: 1.4; }
+.ui-popup .ui-menu-item:hover,.ui-popup .ui-menu-item:focus-visible,.ui-popup .ui-menu-item:focus { background: var(--raised,var(--color-muted)); outline: none; }
+.ui-popup .ui-menu-item[aria-selected="true"] { color: var(--accent); }
+.ui-mention-popup .rich-mentions{position:static;inset:auto;min-width:0;max-height:230px;width:100%;padding:0;border:0;box-shadow:none;background:transparent;border-radius:0}.ui-mention-popup .rich-mentions .ui-menu-item{padding:10px 9px;border-radius:7px;gap:9px;font-size:12px;line-height:1.4}.ui-mention-popup .rich-mentions .ui-menu-item:hover,.ui-mention-popup .rich-mentions .ui-menu-item:focus{background:var(--raised,var(--color-muted));color:inherit}.ui-mention-popup .rich-mentions img{width:28px;height:28px;border-radius:5px}.ui-mention-popup{max-width:calc(100vw - 24px)}

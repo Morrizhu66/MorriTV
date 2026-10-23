@@ -32,7 +32,7 @@ window.CanvasUI = (() => {
     current.onClose?.();
     if (restoreFocus && current.trigger?.isConnected) current.trigger.focus({ preventScroll: true });
   }
-  function open(content, { anchor, point, role = "menu", label = "操作菜单", placement = "bottom-start", onClose, selectedIndex = 0, width } = {}) {
+  function open(content, { anchor, point, role = "menu", label = "操作菜单", placement = "bottom-start", onClose, selectedIndex = 0, width, autoFocus = true } = {}) {
     close();
     const popup = create("div", "ui-popup");
     popup.id = `ui-popup-${++serial}`;
@@ -60,7 +60,7 @@ window.CanvasUI = (() => {
         if (!positioned) { positioned = true; if (role === "listbox" && !reducedMotion.matches) {
           const above = anchor && y < anchor.getBoundingClientRect().top;
           popup.animate([{clipPath:above?"inset(calc(100% - 8px) 0 0 round 12px)":"inset(0 0 calc(100% - 8px) round 12px)",opacity:.4},{clipPath:"inset(0 round 12px)",opacity:1}],{duration:220,easing:"cubic-bezier(.22,1,.36,1)"});
-        } else reveal(popup,4); focus(Math.max(0, selectedIndex)); }
+        } else reveal(popup,4); if(autoFocus) focus(Math.max(0, selectedIndex)); }
       });
     };
     current.cleanup = autoUpdate(reference, popup, update);
@@ -73,7 +73,7 @@ window.CanvasUI = (() => {
       option.focus({ preventScroll: true });
       option.scrollIntoView({ block: "nearest" });
     };
-    focus(Math.max(0, selectedIndex));
+    if(autoFocus) focus(Math.max(0, selectedIndex));
     popup.addEventListener("pointermove", e => { const item = e.target.closest("button,a"); if(item && options.includes(item) && document.activeElement !== item) item.focus({preventScroll:true}); });
     let typed = "", timer;
     popup.addEventListener("keydown", e => {
@@ -252,5 +252,5 @@ window.CanvasUI = (() => {
     changes.forEach(updateSelect);
   });
   observer.observe(document.body, { childList: true, subtree: true });
-  return { menu, close, enhance, reveal, isEditing, get isOpen() { return !!active; } };
+  return { open, menu, close, enhance, reveal, isEditing, get isOpen() { return !!active; } };
 })();

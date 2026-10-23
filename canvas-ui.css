@@ -683,3 +683,5 @@ body.light .project-pill .brand img{filter:invert(1) hue-rotate(180deg);}
 *:focus,*:focus-visible{outline:none!important;}
 :is(input,textarea,select,[contenteditable="true"],[role="textbox"]):focus{box-shadow:none!important;--tw-ring-shadow:0 0 #0000;--tw-ring-offset-shadow:0 0 #0000;}
 :is(button,a,summary,[role="button"],[role="menuitem"]):focus-visible{background-color:var(--raised,var(--color-muted));}
+
+.ui-mention-popup .rich-mentions{position:static;inset:auto;min-width:0;max-height:230px;width:100%;padding:0;border:0;box-shadow:none;background:transparent;border-radius:0}.ui-mention-popup .rich-mentions .ui-menu-item{padding:10px 9px;border-radius:7px;gap:9px;font-size:12px;line-height:1.4}.ui-mention-popup .rich-mentions .ui-menu-item:hover,.ui-mention-popup .rich-mentions .ui-menu-item:focus{background:var(--raised,var(--color-muted));color:inherit}.ui-mention-popup .rich-mentions img{width:28px;height:28px;border-radius:5px}.ui-mention-popup{max-width:calc(100vw - 24px)}
