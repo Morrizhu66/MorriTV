@@ -1,0 +1,4 @@
+#!/bin/zsh
+set -e
+project_dir="${0:A:h:h:h:h}"
+open -a Terminal "$project_dir/Start Model Studio.command"
