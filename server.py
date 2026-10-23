@@ -163,7 +163,7 @@ PERSISTED_TASK_FIELDS = (
     "id", "kind", "provider", "profile", "prompt", "status", "created_at", "started_at",
     "finished_at", "reference_files", "ratio", "duration", "resolution", "image_url",
     "local_image_url", "local_video_url", "error", "queue_position", "folder_id", "history_version",
-    "board_id", "node_id", "reference_bindings", "provider_task_id", "submission_id",
+    "board_id", "node_id", "reference_bindings", "provider_task_id", "provider_result_url", "submission_id",
 )
 
 
@@ -213,7 +213,7 @@ def restore_history_task(snapshot: dict[str, Any]) -> dict[str, Any] | None:
         "folder_id": str(snapshot.get("folder_id") or ""),
         "history_version": int(snapshot.get("history_version") or 1),
     }
-    for field in ("board_id", "node_id", "provider_task_id", "submission_id"):
+    for field in ("board_id", "node_id", "provider_task_id", "provider_result_url", "submission_id"):
         task[field] = str(snapshot.get(field) or "")
     task["reference_bindings"] = snapshot.get("reference_bindings") or []
     return task
@@ -245,8 +245,9 @@ def load_task_history() -> None:
         TASKS.clear()
         for task in latest_snapshots.values():
             if task["status"] in {"queued", "running"}:
-                task["status"] = "paused" if task.get("provider_task_id") else "failed"
-                task["error"] = "服务重启，原任务可继续查询。" if task.get("provider_task_id") else "服务重启时任务尚未完成，请先核对供应商记录；未自动重新生成。"
+                resumable = task.get("provider_task_id") or task.get("provider_result_url")
+                task["status"] = "paused" if resumable else "failed"
+                task["error"] = "服务重启，原任务可继续查询。" if resumable else "服务重启时任务尚未完成，请先核对供应商记录；未自动重新生成。"
                 task["finished_at"] = now()
                 task["queue_position"] = None
                 interrupted.append(task)
@@ -763,6 +764,7 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
                 "reference_bindings": bindings,
                 "submission_id": submission_id,
                 "provider_task_id": "",
+                "provider_result_url": "",
             }
             TASKS[task_id] = task
             created.append(task)
@@ -857,7 +859,11 @@ def run_task(task_id: str) -> None:
                 with LOCK:
                     task["provider_task_id"] = value
                     record_task_event("upstream_created", task)
-            image_content = lingganya_client.generate(task, api_key, remember_upstream)
+            def remember_result_url(value):
+                with LOCK:
+                    task["provider_result_url"] = value
+                    record_task_event("result_url_received", task)
+            image_content = lingganya_client.generate(task, api_key, remember_upstream, on_result_url=remember_result_url)
             result = {}
             image_url = video_url = ""
         elif task.get("provider") == "doubao_work":
@@ -1220,7 +1226,7 @@ class StudioHandler(SimpleHTTPRequestHandler):
                 with LOCK:
                     task = TASKS.get(resume.group(1))
                     is_doubao = bool(task and task.get("provider") == "doubao_work" and doubao_work.pending_task_id() == task["id"])
-                    if not task or not (is_doubao or (task.get("provider") == "lingganya" and task.get("provider_task_id"))):
+                    if not task or not (is_doubao or (task.get("provider") == "lingganya" and (task.get("provider_task_id") or task.get("provider_result_url")))):
                         raise ValueError("没有可继续查询的供应商任务")
                     if task["status"] not in {"paused", "failed"}:
                         raise ValueError("该任务正在执行或已完成")
