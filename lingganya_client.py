@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+from http.client import IncompleteRead
 import json
 import re
 import time
@@ -61,6 +62,8 @@ class SafeRedirect(HTTPRedirectHandler):
 
 def request(path, key, body=None, content_type="application/json", timeout=600):
     url = path if path.startswith("https://") else BASE_URL + path
+    label = "result-download" if path.startswith("https://") else path
+    started = time.monotonic()
     headers = {}
     if urlparse(url).netloc == urlparse(BASE_URL).netloc:
         headers["Authorization"] = "Bearer " + key
@@ -69,8 +72,15 @@ def request(path, key, body=None, content_type="application/json", timeout=600):
     req = Request(url, data=body, headers=headers)
     try:
         with build_opener(SafeRedirect()).open(req, timeout=timeout) as response:
-            return response.read(), response.headers.get_content_type()
+            print(f"lingganya {label}: headers after {time.monotonic() - started:.1f}s; content-length={response.headers.get('Content-Length', 'unknown')}", flush=True)
+            content = response.read()
+            print(f"lingganya {label}: read {len(content)} bytes after {time.monotonic() - started:.1f}s", flush=True)
+            return content, response.headers.get_content_type()
+    except IncompleteRead as exc:
+        print(f"lingganya {label}: incomplete after {time.monotonic() - started:.1f}s; read={len(exc.partial)} remaining={exc.expected}", flush=True)
+        raise
     except HTTPError as exc:
+        print(f"lingganya {label}: HTTP {exc.code} after {time.monotonic() - started:.1f}s", flush=True)
         try:
             payload = json.loads(exc.read())
             error = payload.get("error", payload)
@@ -127,7 +137,23 @@ def multipart(fields, references):
     return b"".join(chunks), "multipart/form-data; boundary=" + boundary
 
 
-def decode_result(payload, key):
+def download_result(url, key, sleep=time.sleep):
+    for attempt in range(3):
+        try:
+            return request(url, key)[0]
+        except IncompleteRead:
+            if attempt == 2:
+                raise PendingTask("供应商图片下载中断；已保存结果地址，可用“继续查询”恢复，未重新提交生成。") from None
+        except RuntimeError as exc:
+            transient = str(exc).startswith(("灵感鸭连接中断或超时", "灵感鸭 HTTP 502", "灵感鸭 HTTP 503", "灵感鸭 HTTP 504"))
+            if not transient:
+                raise PendingTask(f"供应商结果地址已保存，但下载失败：{exc}；可用“继续查询”恢复，未重新提交生成。") from None
+            if attempt == 2:
+                raise PendingTask("供应商图片下载中断；已保存结果地址，可用“继续查询”恢复，未重新提交生成。") from None
+        sleep(attempt + 1)
+
+
+def decode_result(payload, key, sleep=time.sleep, on_result_url=lambda value: None):
     data = payload.get("data")
     if not isinstance(data, list) or not data:
         return None
@@ -141,11 +167,14 @@ def decode_result(payload, key):
     if url:
         if not str(url).startswith("https://"):
             raise RuntimeError("供应商返回的图片地址无效")
-        return request(url, key)[0]
+        on_result_url(str(url))
+        return download_result(url, key, sleep)
     return None
 
 
-def generate(task, key, on_task_id=lambda value: None, sleep=time.sleep):
+def generate(task, key, on_task_id=lambda value: None, sleep=time.sleep, on_result_url=lambda value: None):
+    if task.get("provider_result_url"):
+        return download_result(task["provider_result_url"], key, sleep)
     video = task["profile"] in VIDEO_PROFILES
     area = "videos" if video else "images"
     upstream_id = task.get("provider_task_id")
@@ -153,7 +182,7 @@ def generate(task, key, on_task_id=lambda value: None, sleep=time.sleep):
         payload = {"task_id": upstream_id}
     else:
         validate(task["profile"], task["prompt"], task["ratio"], task["resolution"], task["reference_files"])
-        fields = {"model": IMAGE_MODELS.get(task["profile"], MODEL), "prompt": task["prompt"], "size": "1024x1024" if video else image_size(task["profile"], task["ratio"], task["resolution"], task["reference_files"]), "n": 1, "response_format": "b64_json"}
+        fields = {"model": IMAGE_MODELS.get(task["profile"], MODEL), "prompt": task["prompt"], "size": "1024x1024" if video else image_size(task["profile"], task["ratio"], task["resolution"], task["reference_files"]), "n": 1, "response_format": "url"}
         if video:
             seconds = int(task["duration"])
             if not 5 <= seconds <= (30 if task["profile"] == PX_PROFILE else 15):
@@ -198,7 +227,7 @@ def generate(task, key, on_task_id=lambda value: None, sleep=time.sleep):
             error = payload.get("error") or {"message": "生成失败"}
             message = error.get("message", "生成失败") if isinstance(error, dict) else str(error)
             raise RuntimeError(str(message).replace(key, "[redacted]")[:500])
-        result = decode_result(payload, key)
+        result = decode_result(payload, key, sleep, on_result_url)
         if result:
             return result
         if not upstream_id:

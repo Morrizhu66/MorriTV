@@ -86,6 +86,19 @@ class TaskHistoryRecoveryTests(unittest.TestCase):
         self.assertIn("服务重启", restored["error"])
         self.assertIsNone(restored["queue_position"])
 
+    def test_saved_image_result_url_survives_restart_as_resumable_without_public_url(self):
+        url = "https://www.lingganyaapi.com/result/image.png?signature=private"
+        task = task_snapshot("image-result", "running", kind="image", provider="lingganya",
+                             provider_result_url=url, provider_task_id="")
+        self.server.record_task_event("result_url_received", task)
+
+        self.server.load_task_history()
+
+        restored = self.server.TASKS["image-result"]
+        self.assertEqual(restored["status"], "paused")
+        self.assertEqual(restored["provider_result_url"], url)
+        self.assertNotIn("provider_result_url", self.server.public_task(restored))
+
     def test_records_a_full_task_snapshot_for_future_recovery(self):
         self.server.record_task_event("completed", task_snapshot("task-3", "completed"))
 

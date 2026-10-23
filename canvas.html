@@ -176,6 +176,7 @@
               <span data-icon="sliders"></span><span>工具</span>
             </summary>
             <div class="dropdown">
+              <button id="doubao-login" class="menu-item">豆包账号登录</button>
               <button id="group-button" class="menu-item">将所选节点分组</button
               ><button id="arrange-button" class="menu-item">
                 自动排列所选 / 全部</button
@@ -184,7 +185,7 @@
               </button>
               <hr />
               <button id="theme-toggle" class="menu-item">切换浅色外观</button
-              ><button id="help-toggle" class="menu-item">快捷键</button>
+              ><button id="cloud-guide-toggle" class="menu-item">上云教程</button><button id="help-toggle" class="menu-item">快捷键</button>
             </div>
           </details>
         </nav><button id="script-button" class="script-orb-button" title="脚本 · DeepSeek Harness" aria-label="打开脚本编写器" aria-expanded="false"><span id="script-orb"></span><span class="orb-label">脚本</span></button></div>
@@ -219,6 +220,16 @@
     <div id="toast" role="status" hidden></div>
     <div id="mention-menu" class="floating-menu" hidden></div>
     <div id="connect-menu" class="floating-menu" hidden></div>
+    <dialog id="cloud-guide-dialog" aria-labelledby="cloud-guide-title">
+      <header><h2 id="cloud-guide-title">上云教程</h2><button data-close aria-label="关闭上云教程">×</button></header>
+      <div class="cloud-guide-copy">
+        <p class="cloud-guide-lead">让素材留在自己的云端。</p>
+        <p>MorriTV 默认在本地保存素材。你也可以连接自己的云存储，减少本地磁盘占用。</p>
+        <p>在 Codex、WorkBuddy 等 Agent 中打开项目，让它参考 GitHub README 的「素材保存」教程，协助你配置并验证上传。</p>
+        <p class="cloud-guide-note">已经配置好云存储？继续使用即可，无需重新配置。上云后仍会保留部分缩略图、视频和缓存。</p>
+        <a class="cloud-guide-link" href="https://github.com/Morrizhu66/MorriTV" target="_blank" rel="noopener noreferrer">查看 GitHub 教程 <span aria-hidden="true">↗</span><small>github.com/Morrizhu66/MorriTV</small></a>
+      </div>
+    </dialog>
     <dialog id="help-dialog">
       <header>
         <h2>快捷键</h2>

@@ -204,16 +204,16 @@ test('provider submission maps reordered mentions once and respects numeric boun
     {kind:'image',name:'图片2',url:'/media/a.png',role:'人物'},
     {kind:'image',name:'图片1',url:'/media/b.png',role:'衣服'},
     {kind:'text',name:'故事',text:'@图片1 不应被替换'}]};
-  const c=vm.createContext({resolvePendingReferences:()=>false,board:()=>({nodes:[n]}),compatibility:()=>'',pending:new Set(),clone:structuredClone,uid:()=> 'submission',boardId:'b',touch(){},saving:false,save:async()=>{},dirty:false,render(){},FormData,
+  const c=vm.createContext({DOUBAO_PROFILES:["seedance-2.5-db","seedance-2.0-mini-db","seedance-2.0-fast-db","seedance-2.0-db"],resolvePendingReferences:()=>false,board:()=>({nodes:[n]}),compatibility:()=>'',pending:new Set(),clone:structuredClone,uid:()=> 'submission',boardId:'b',touch(){},saving:false,save:async()=>{},dirty:false,render(){},FormData,
     fetch:async()=>({ok:true,blob:async()=>new Blob(['x'],{type:'image/png'})}),mediaURL:r=>r.url,
     api:async(u,o)=>{form=o.body;return {tasks:[{id:'t'}]};},tasks:[],rebuildTaskIndex(){},toast(){},poll:async()=>{}});
   vm.runInContext(section('function providerReferencePrompt(', 'async function resumeTask('),c);
   await c.submitNodeRequest(n);
-  assert.equal(form.get('prompts'),'@图片1 穿着 @图片2 的衣服，保留 @图片10\n故事：@图片1 不应被替换\n图片1：图片2，用途：人物。\n图片2：图片1，用途：衣服。');
+  assert.equal(form.get('prompts'),'@图片1 穿着 @图片2 的衣服，保留 @图片10\n故事：@图片1 不应被替换');
   assert.equal(form.getAll('references').length,2);
   n.replay={displayPrompt:n.prompt,refs:structuredClone(n.refs),prompt:'精确重放 @图片2'};
   await c.submitNodeRequest(n);
-  assert.equal(form.get('prompts'),'精确重放 @图片2');
+  assert.equal(form.get('prompts'),'@图片1 穿着 @图片2 的衣服，保留 @图片10\n故事：@图片1 不应被替换');
 });
 
 test('poll recovers results oldest first and does not replace a selection with a late older run', async () => {
@@ -246,4 +246,11 @@ test('reference refresh retains the live prompt, caret and scrolled position',()
  restore();
  assert.deepEqual(calls,[['destroy'],['sync','第一段\n@图片1 第二段'],['restore',72]]);
  assert.equal(editor.scrollTop,350);
+});
+
+test('logged-out Doubao submission stops before save or upload', async () => {
+  const profiles = ['seedance-2.5-db','seedance-2.0-mini-db','seedance-2.0-fast-db','seedance-2.0-db'];
+  const c = vm.createContext({DOUBAO_PROFILES:profiles, DOUBAO_LOGIN_MESSAGE:'请在工具中找到豆包登录工具', api:async url=>{assert.equal(url,'/api/doubao/status');return {ready:false};}});
+  vm.runInContext(section('async function submitNodeRequest(', 'async function resumeTask('), c);
+  for (const profile of profiles) await assert.rejects(c.submitNodeRequest({profile}), /豆包登录工具/);
 });

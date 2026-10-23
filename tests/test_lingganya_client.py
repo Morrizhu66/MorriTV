@@ -1,4 +1,5 @@
 import base64
+from http.client import IncompleteRead
 import json
 import tempfile
 import unittest
@@ -23,7 +24,35 @@ class LingganyaContractTests(unittest.TestCase):
         self.assertEqual(request.call_count,1)
         self.assertEqual(request.call_args.args[0],'/v1/images/generations')
         payload=json.loads(request.call_args.args[2])
-        self.assertEqual(payload,dict(model=client.MODEL,prompt='a duck',size='1024x1024',n=1,response_format='b64_json'))
+        self.assertEqual(payload,dict(model=client.MODEL,prompt='a duck',size='1024x1024',n=1,response_format='url'))
+
+    def test_result_download_retries_without_reposting_generation(self):
+        url='https://www.lingganyaapi.com/result/image.png'
+        calls=[response({'data':[{'url':url}]}),IncompleteRead(b'partial',3),(b'image','image/png')]
+        saved=[]
+        with patch.object(client,'request',side_effect=calls) as request:
+            self.assertEqual(client.generate(task(),'secret',sleep=lambda _:None,on_result_url=saved.append),b'image')
+        self.assertEqual(saved,[url])
+        self.assertEqual([call.args[0] for call in request.call_args_list],
+                         ['/v1/images/generations',url,url])
+
+    def test_result_download_exhaustion_never_reposts_generation(self):
+        url='https://www.lingganyaapi.com/result/image.png'
+        calls=[response({'data':[{'url':url}]})]+[IncompleteRead(b'partial',3)]*3
+        saved=[]
+        with patch.object(client,'request',side_effect=calls) as request:
+            with self.assertRaisesRegex(client.PendingTask,'下载中断'):
+                client.generate(task(),'secret',sleep=lambda _:None,on_result_url=saved.append)
+        self.assertEqual(saved,[url])
+        self.assertEqual([call.args[0] for call in request.call_args_list],
+                         ['/v1/images/generations',url,url,url])
+
+    def test_resume_saved_result_url_only_downloads(self):
+        url='https://www.lingganyaapi.com/result/image.png'
+        data=task(provider_result_url=url)
+        with patch.object(client,'request',return_value=(b'image','image/png')) as request:
+            self.assertEqual(client.generate(data,'secret',sleep=lambda _:None),b'image')
+        self.assertEqual([call.args[0] for call in request.call_args_list],[url])
 
     def test_edit_uploads_real_file_not_a_filename_in_prompt(self):
         with tempfile.TemporaryDirectory() as temp:
