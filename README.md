@@ -4,6 +4,10 @@
 
 ![MorriTV](assets/brand/morritv-logo.png)
 
+## 启动 MorriTV
+
+在 macOS 的 Finder 中双击仓库根目录的 **[点击这个打开.app](%E7%82%B9%E5%87%BB%E8%BF%99%E4%B8%AA%E6%89%93%E5%BC%80.app)**（MorriTV 图标）。它会打开终端、启动本地服务，并在浏览器中打开 MorriTV。首次启动可能需要安装依赖。
+
 从参考素材到连续片段，从脚本方法到可复用灵感。下面按实际创作流程介绍，不重复基础的生图、生视频操作。
 
 ## 从画板开始
