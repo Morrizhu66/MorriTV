@@ -3549,6 +3549,7 @@ $("#story-view").onclick = () => setWorkspaceView(true);
 $("#story-new-shot").onclick = newInspirationFolder;
 $("#theme-toggle").onclick = () =>
   applyTheme(!document.body.classList.contains("light"));
+$("#cloud-guide-toggle").onclick = () => $("#cloud-guide-dialog").showModal();
 $("#help-toggle").onclick = () => $("#help-dialog").showModal();
 $("#toggle-map").onclick = () => {
   $("#minimap").hidden = !$("#minimap").hidden;
