@@ -27,6 +27,7 @@ from urllib.request import urlopen, Request
 from cloud_images import CloudImages
 from cloud_workspace import CloudWorkspace
 import lingganya_client
+import doubao_work
 import script_studio
 from board_export import build_export
 from board_store import BoardStore, BoardConflict
@@ -66,6 +67,7 @@ TASKS: dict[str, dict[str, Any]] = {}
 LOCK = threading.RLock()
 IMAGE_EXECUTOR = ThreadPoolExecutor(max_workers=IMAGE_MAX_WORKERS, thread_name_prefix="model-studio-image")
 VIDEO_EXECUTOR = ThreadPoolExecutor(max_workers=VIDEO_MAX_WORKERS, thread_name_prefix="model-studio-video")
+DOUBAO_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="model-studio-doubao")
 EXECUTORS = {"image": IMAGE_EXECUTOR, "video": VIDEO_EXECUTOR}
 SAFE_NAME = re.compile(r"[^A-Za-z0-9._-]+")
 ARK_HOST = "ark-cn-beijing.bytedance.net"
@@ -117,6 +119,7 @@ def health_flags() -> dict[str, Any]:
         "image_ready": "ARK_API_KEY" in keys,
         "video_ready": "SEEDANCE_ARK_API_KEY" in keys,
         "lingganya_ready": bool(private_env_value("LINGGANYA_API_KEY")),
+        "doubao_ready": bool(private_env_value("DOUBAO_WORK_BRIDGE")) or doubao_work.ready(),
         "tos_ready": tos_status["ready"],
         "workers": {"image": IMAGE_MAX_WORKERS, "video": VIDEO_MAX_WORKERS},
     }
@@ -247,6 +250,9 @@ def load_task_history() -> None:
                 task["finished_at"] = now()
                 task["queue_position"] = None
                 interrupted.append(task)
+            if task.get("provider") == "doubao_work" and doubao_work.pending_task_id() == task["id"]:
+                task["status"] = "paused"
+                task["error"] = "豆包连接中断，可继续查询原任务，不会重新生成。"
             TASKS[task["id"]] = task
         for task in interrupted:
             record_task_event("interrupted", task)
@@ -677,6 +683,9 @@ def validate_task_input(
         return "lingganya"
     if profile.startswith("hfsy-"):
         raise ValueError("HFSY 已移除，请选择灵感鸭或 Seedream 模型；历史素材仍可查看。")
+    if profile == doubao_work.PROFILE:
+        doubao_work.validate(kind, prompt, ratio, duration, references)
+        return "doubao_work"
     if kind == "video" and profile != "seedance-reference-video-ark-direct":
         raise ValueError("视频任务请使用 Seedance Reference Video")
     if kind == "image" and profile not in {"seedream43-ark-direct", "seedream50-pro-ark-direct"}:
@@ -689,8 +698,9 @@ def validate_task_input(
 def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
     kind = fields.getfirst("kind", "image")
     profile = fields.getfirst("profile", "")
-    raw_prompts = fields.getfirst("prompts", "").strip()
-    prompts = [raw_prompts] if raw_prompts else []
+    submitted_prompt = fields.getfirst("prompts", "")
+    raw_prompts = submitted_prompt if profile == doubao_work.PROFILE else submitted_prompt.strip()
+    prompts = [raw_prompts] if raw_prompts.strip() else []
     folder_id = str(fields.getfirst("folder_id", "") or "")
     if not MEDIA_LIBRARY.folder_exists(folder_id):
         raise ValueError("收藏夹不存在，请刷新页面后重试")
@@ -716,6 +726,10 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
     created: list[dict[str, Any]] = []
     with LOCK:
         for prompt in prompts:
+            doubao_busy = provider == "doubao_work" and (bool(doubao_work.pending_task_id()) or any(
+                item.get("provider") == "doubao_work" and item["status"] in {"queued", "running"}
+                for item in TASKS.values()
+            ))
             task_id = uuid.uuid4().hex[:12]
             task = {
                 "id": task_id,
@@ -723,10 +737,10 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
                 "provider": provider,
                 "profile": profile,
                 "prompt": prompt,
-                "status": "queued",
+                "status": "failed" if doubao_busy else "queued",
                 "created_at": now(),
                 "started_at": None,
-                "finished_at": None,
+                "finished_at": now() if doubao_busy else None,
                 "reference_files": references,
                 "ratio": ratio,
                 "duration": duration,
@@ -735,8 +749,8 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
                 "local_image_url": "",
                 "video_url": "",
                 "local_video_url": "",
-                "error": "",
-                "queue_position": len([
+                "error": "当前已有生视频任务进行中，请等结束后再试" if doubao_busy else "",
+                "queue_position": None if doubao_busy else len([
                     queued for queued in TASKS.values()
                     if queued["status"] == "queued" and queued["kind"] == kind
                 ]) + 1,
@@ -750,8 +764,9 @@ def create_tasks(fields: cgi.FieldStorage) -> list[dict[str, Any]]:
             }
             TASKS[task_id] = task
             created.append(task)
-            record_task_event("queued", task)
-            EXECUTORS[kind].submit(run_task, task_id)
+            record_task_event("failed" if doubao_busy else "queued", task)
+            if not doubao_busy:
+                (DOUBAO_EXECUTOR if provider == "doubao_work" else EXECUTORS[kind]).submit(run_task, task_id)
     return created
 
 
@@ -843,6 +858,16 @@ def run_task(task_id: str) -> None:
             image_content = lingganya_client.generate(task, api_key, remember_upstream)
             result = {}
             image_url = video_url = ""
+        elif task.get("provider") == "doubao_work":
+            source = doubao_work.generate(task, private_env_value("DOUBAO_WORK_BRIDGE"), private_env_value("DOUBAO_VIDEO_MODEL") or "seedance 2.5")
+            directory = workspace_result_dir(str(task.get("folder_id") or ""))
+            directory.mkdir(parents=True, exist_ok=True)
+            target = directory / f"{task_id}.mp4"
+            temporary = target.with_suffix(".mp4.part")
+            shutil.copyfile(source, temporary)
+            temporary.replace(target)
+            result = {"output_file": str(target)}
+            image_url = video_url = ""
         elif task.get("provider") == "hfsy":
             raise RuntimeError("HFSY 接入已移除，历史任务不会重新提交")
         else:
@@ -914,6 +939,8 @@ def run_task(task_id: str) -> None:
     except Exception as exc:
         with LOCK:
             task["status"] = "failed"
+            if task.get("provider") == "doubao_work" and doubao_work.pending_task_id() == task["id"]:
+                task["status"] = "paused"
             task["error"] = str(exc)[:900]
             task["finished_at"] = now()
             record_task_event("failed", task)
@@ -1180,14 +1207,17 @@ class StudioHandler(SimpleHTTPRequestHandler):
             if resume:
                 with LOCK:
                     task = TASKS.get(resume.group(1))
-                    if not task or task.get("provider") != "lingganya" or not task.get("provider_task_id"):
+                    is_doubao = bool(task and task.get("provider") == "doubao_work" and doubao_work.pending_task_id() == task["id"])
+                    if not task or not (is_doubao or (task.get("provider") == "lingganya" and task.get("provider_task_id"))):
                         raise ValueError("没有可继续查询的供应商任务")
                     if task["status"] not in {"paused", "failed"}:
                         raise ValueError("该任务正在执行或已完成")
                     task["status"] = "queued"
                     task["error"] = ""
+                    if is_doubao:
+                        task["_doubao_recover"] = True
                     record_task_event("resumed", task)
-                    EXECUTORS[task["kind"]].submit(run_task, task["id"])
+                    (DOUBAO_EXECUTOR if is_doubao else EXECUTORS[task["kind"]]).submit(run_task, task["id"])
                 return self.respond_json({"ok": True})
             if path == "/api/storage/sync":
                 if not tos_uploader.config_status(private_env_value)["ready"]:

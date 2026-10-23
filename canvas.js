@@ -134,6 +134,16 @@ const MODELS = {
     videos: 8,
     hint: "图片 / 视频参考；不承诺精确首尾帧控制",
   },
+  "seedance-2.5-db": {
+    name: "seedance 2.5-db",
+    kind: "video",
+    ratios: ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16"],
+    resolutions: ["720p"],
+    durations: Array.from({length: 27}, (_, i) => i + 4),
+    images: 30,
+    videos: 10,
+    hint: "4–30 秒；经豆包网页版生成",
+  },
 };
 MODELS["lingganya-gpt-image-2.5-sunburst"] = {...MODELS["lingganya-gpt-image-2.5-sunburst-special"], name: "GPT Image 2.5 · Sunburst"};
 MODELS["lingganya-gpt-image-2-special"] = {...MODELS["lingganya-gpt-image-2.5-sunburst-special"], name: "GPT Image 2 · Special", ratios: ["adaptive", "1:1", "16:9", "9:16"]};
@@ -1731,7 +1741,9 @@ async function submitNodeRequest(n) {
     form.set("submission_id", submissionId);
     form.set("reference_bindings", JSON.stringify(refs));
     const replayPrompt = n.replay?.displayPrompt === snapshot.prompt && JSON.stringify(n.replay?.refs) === JSON.stringify(snapshot.refs) ? n.replay.prompt : null;
-    const prompt = replayPrompt ?? providerReferencePrompt(snapshot.prompt, refs);
+    const prompt = snapshot.profile === "seedance-2.5-db"
+      ? snapshot.prompt
+      : (replayPrompt ?? providerReferencePrompt(snapshot.prompt, refs));
     let imageIndex = 0,
       videoIndex = 0;
     for (const ref of refs) {
