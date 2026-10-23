@@ -3940,18 +3940,14 @@ $("#doubao-login").onclick = async () => {
   if (menu) menu.open = false;
   button.disabled = true;
   try {
-    await api("/api/doubao/login", {method: "POST", headers: {"X-MorriTV-Action": "doubao-login"}});
-    toast("正在启动豆包登录窗口…");
-    let state, announced = false;
-    do {
-      await new Promise(resolve => setTimeout(resolve, 2000));
+    let state = await api("/api/doubao/login", {method: "POST", headers: {"X-MorriTV-Action": "doubao-login"}});
+    if (state.browser_open) { toast("已登录"); return; }
+    toast("正在打开豆包页面…");
+    while (state.logging_in && !state.browser_open) {
+      await new Promise(resolve => setTimeout(resolve, 500));
       state = await api("/api/doubao/status");
-      if (state.browser_open && !announced) {
-        toast("豆包窗口已打开，请登录并进入工作页面；验证完成后窗口会自动关闭");
-        announced = true;
-      }
-    } while (state.logging_in);
-    toast(state.error || (state.ready ? "豆包账号已登录，验证窗口已关闭，可以生成视频了" : DOUBAO_LOGIN_MESSAGE));
+    }
+    toast(state.error || (state.browser_open ? "豆包页面已打开" : state.ready ? "已登录" : "豆包页面未能打开，请重试"));
   } catch (error) { toast(error.message); }
   finally { button.disabled = false; }
 };

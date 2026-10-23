@@ -6,6 +6,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 PROFILE = "seedance-2.5-db"
@@ -26,7 +27,7 @@ def ready():
 
 def status():
     with _LOGIN_LOCK:
-        return {**_LOGIN, "browser_open": _LOGIN["logging_in"] and (STATE_DIR / "login-open").is_file(), "ready": ready() and not _LOGIN["logging_in"] and not _LOGIN["error"]}
+        return {**_LOGIN, "browser_open": _LOGIN["logging_in"] and (STATE_DIR / "login-open").is_file(), "ready": ready() and not _LOGIN["error"] and (not _LOGIN["logging_in"] or (STATE_DIR / "login-open").is_file())}
 
 
 def start_login():
@@ -39,6 +40,7 @@ def start_login():
         driver = root / "doubao_web.py"
         if not driver.is_file():
             raise ValueError("豆包登录程序不在当前目录，请从豆包功能分支重启 MorriTV 服务")
+        (STATE_DIR / "login-close").unlink(missing_ok=True)
         (STATE_DIR / "login-open").unlink(missing_ok=True)
         _LOGIN.update(logging_in=True, error="")
         def login():
@@ -47,7 +49,7 @@ def start_login():
                 python = root / ".doubao-venv/bin/python"
                 result = subprocess.run([str(python) if python.exists() else sys.executable,
                                          str(root / "doubao_web.py"), "--login"],
-                                        capture_output=True, text=True, timeout=660)
+                                        capture_output=True, text=True)
                 data = json.loads(result.stdout)
                 if result.returncode or data.get("status") != "ready":
                     raise RuntimeError(data.get("error") or "豆包登录未完成，请重试")
@@ -97,6 +99,15 @@ def prompt_text(prompt, ratio, duration, references, video_model="seedance 2.5")
 
 def generate(task, bridge_command=None, video_model=None):
     """Return a local MP4 path from a configured agent bridge."""
+    # The login window owns the same Chrome profile. Release it only when a
+    # generation is explicitly requested, then let the generation driver take over.
+    if status()["browser_open"]:
+        (STATE_DIR / "login-close").touch()
+        deadline = time.monotonic() + 15
+        while status()["logging_in"]:
+            if time.monotonic() > deadline:
+                raise RuntimeError("请关闭豆包登录窗口后再生成")
+            time.sleep(0.1)
     video_model = video_model or PROFILES[task.get("profile", PROFILE)]
     command = bridge_command if bridge_command is not None else os.getenv("DOUBAO_WORK_BRIDGE", "")
     argv = shlex.split(command) if command.strip() else [str(Path(__file__).resolve().parent / ".doubao-venv/bin/python") if (Path(__file__).resolve().parent / ".doubao-venv/bin/python").exists() else sys.executable, str(Path(__file__).resolve().parent / "doubao_web.py")]
